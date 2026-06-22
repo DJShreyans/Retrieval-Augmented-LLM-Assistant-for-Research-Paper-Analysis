@@ -1,80 +1,96 @@
-# ResearchMate Deployment Guide 🚀
+# Step-by-Step Deployment Guide 🚀
 
-This guide provides step-by-step instructions to deploy your ResearchMate full-stack application for free using **Render** (for the FastAPI backend) and **Vercel** (for the Next.js frontend).
+This document provides a highly detailed, step-by-step guide to deploying the **ResearchMate** full-stack RAG application for free using **Render** (for the FastAPI backend) and **Vercel** (for the Next.js frontend).
 
 ---
 
-## 📦 Part 1: Deploy the Backend (FastAPI on Render)
+## 📋 Prerequisites
 
-Render is a cloud platform that hosts Python APIs. We will configure it to run the FastAPI app and set up a persistent disk to ensure your uploaded research papers and ChromaDB vectors are never deleted.
+Before starting, ensure you have:
+1. A **GitHub** account with your code pushed to repository: `https://github.com/DJShreyans/Retrieval-Augmented-LLM-Assistant-for-Research-Paper-Analysis`
+2. A free **Render** account: [Sign up here](https://dashboard.render.com/register) (Log in with your GitHub account for easiest connection).
+3. A free **Vercel** account: [Sign up here](https://vercel.com/signup) (Log in with your GitHub account).
+4. Your active **NVIDIA API Key** ready.
 
-### Step 1.1: Log in and Import Repository
-1. Go to **[Render](https://render.com/)** and sign in using your GitHub account.
-2. On the dashboard, click **New** > **Web Service**.
-3. Under "Connect a repository," locate `Retrieval-Augmented-LLM-Assistant-for-Research-Paper-Analysis` and click **Connect**.
+---
 
-### Step 1.2: Configure Build & Start Settings
-Configure the web service parameters exactly as follows:
-*   **Name**: `researchmate-backend` (or a name of your choice)
-*   **Language**: `Python`
+## 📦 Step 1: Deploy the Backend API (Render)
+
+Render will host the FastAPI server which processes your document uploads, runs ChromaDB queries, and integrates with the NVIDIA Cloud LLM.
+
+### 1.1 Connect to GitHub
+1. Log in to your **[Render Dashboard](https://dashboard.render.com/)**.
+2. In the top-right corner, click the blue **New +** button, then select **Web Service** from the dropdown menu.
+3. On the next screen, choose **Build and deploy from a Git repository**.
+4. In the list of repositories, find `Retrieval-Augmented-LLM-Assistant-for-Research-Paper-Analysis` and click the **Connect** button next to it.
+
+### 1.2 Input Configuration Details
+Configure the settings exactly as specified below:
+*   **Name**: `researchmate-backend`
+*   **Region**: Select the region closest to you (e.g., `Singapore` or `Oregon`).
 *   **Branch**: `main`
+*   **Language**: `Python`
 *   **Root Directory**: `backend`
 *   **Build Command**: `pip install -r requirements.txt`
 *   **Start Command**: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-*   **Instance Type**: Select **Free** (or Starter if you want persistent disks).
+*   **Instance Type**: Select **Free** (Scroll to the bottom of the list to find the free tier option).
 
-### Step 1.3: Add Environment Variables
-1. Scroll down and click **Advanced**.
-2. Click **Add Environment Variable** and configure your secret key:
+### 1.3 Add Environment Variables
+1. Scroll down to the bottom of the page and click the **Advanced** button.
+2. Click **Add Environment Variable**.
+3. Configure the following variable details:
    *   **Key**: `NVIDIA_API_KEY`
    *   **Value**: `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`
+4. Make sure there are no spaces or extra characters in the key or value.
 
-### Step 1.4: (Optional but Recommended) Persistent Storage
-> [!NOTE]
-> Render's Free instance tier uses ephemeral storage (uploaded PDFs and vectors are cleared if the server sleeps or restarts).
-> To persist documents permanently in production, upgrade to Render's **Starter** tier ($7/month) and attach a persistent disk volume:
-> - **Volume Name**: `researchmate-data`
-> - **Mount Path**: `/data`
-> - **Size**: `1 GB` (or larger)
-> - Change `DB_PATH` and `UPLOADS_PATH` in `backend/app/rag.py` to point to `/data` (if utilizing a persistent volume).
-
-### Step 1.5: Deploy and Copy API URL
-1. Click **Deploy Web Service** at the bottom of the page.
-2. Wait 2-3 minutes for the build to complete. Once the log says `Application startup complete.`, look at the top left of the screen to find your public backend URL (e.g., `https://researchmate-backend.onrender.com`).
-3. **Copy this URL.** You will need it for the frontend.
-
----
-
-## 🌐 Part 2: Deploy the Frontend (Next.js on Vercel)
-
-Vercel is the default cloud platform for Next.js web applications.
-
-### Step 2.1: Log in and Import Repository
-1. Go to **[Vercel](https://vercel.com/)** and log in with your GitHub account.
-2. Click **Add New** > **Project** on your dashboard.
-3. Import your repository: `Retrieval-Augmented-LLM-Assistant-for-Research-Paper-Analysis`.
-
-### Step 2.2: Configure Environment Variables
-Before deploying, we must tell Next.js where to send chatbot, compare, and mindmap queries:
-1. In the Vercel project configuration menu, expand the **Environment Variables** section.
-2. Configure the following variable:
-   *   **Name / Key**: `NEXT_PUBLIC_API_URL`
-   *   **Value**: *Paste the Render Backend URL you copied in Step 1.5* (e.g., `https://researchmate-backend.onrender.com`)
-   *(Make sure there is no trailing slash `/` at the end of the URL).*
-
-### Step 2.3: Deploy!
-1. Click the **Deploy** button.
-2. Vercel will build the frontend pages, optimize static elements, and deploy it to a public `.vercel.app` domain in less than a minute.
-3. Once completed, click **Go to Dashboard** to access your public live web app link!
-
----
-
-## 🔄 Updating Deployed Code
-Whenever you want to push updates, bug fixes, or design improvements to your live application:
-1. Commit and push changes to your GitHub main branch:
-   ```bash
-   git add .
-   git commit -m "Your update message"
-   git push origin main
+### 1.4 Start the Deployment
+1. Click the blue **Create Web Service** button.
+2. Render will spin up a container, download your Python environment, install all libraries from `requirements.txt`, and boot the server.
+3. Wait about 3-4 minutes. In the live terminal log panel, look for this line to confirm success:
+   ```text
+   INFO:     Application startup complete.
    ```
-2. Vercel and Render will automatically detect the push, rebuild, and update your live frontend and backend endpoints instantly!
+4. Look at the top-left corner of the page under your project name to find your public URL (it will look like: `https://researchmate-backend.onrender.com`).
+5. **Copy this URL** to your clipboard.
+
+---
+
+## 🌐 Step 2: Deploy the Frontend UI (Vercel)
+
+Vercel will build your Next.js frontend pages and host them globally.
+
+### 2.1 Import the Repository
+1. Log in to your **[Vercel Dashboard](https://vercel.com/)**.
+2. Click the **Add New...** dropdown button in the top-right corner, then select **Project**.
+3. Under "Import Git Repository," click **Import** next to your `Retrieval-Augmented-LLM-Assistant-for-Research-Paper-Analysis` repository.
+
+### 2.2 Configure Framework & Project Folders
+1. Under **Framework Preset**, Vercel will automatically detect **Next.js**. Leave this as default.
+2. Under **Root Directory**, click **Edit** and select the `frontend` folder (so Vercel knows to build the Next.js files in the frontend directory rather than the root). Click **OK**.
+
+### 2.3 Configure the Backend API Environment Variable
+This tells the Next.js UI where your Render backend server lives.
+1. Scroll down and expand the **Environment Variables** section.
+2. Enter the following key-value details:
+   *   **Name**: `NEXT_PUBLIC_API_URL`
+   *   **Value**: *Paste the public Render URL you copied in Step 1.5* (e.g., `https://researchmate-backend.onrender.com`).
+   *   *(CRITICAL: Ensure there is no trailing slash `/` at the end of the URL, for example, do NOT input `https://.../`)*.
+3. Click the **Add** button.
+
+### 2.4 Launch Deployment
+1. Click **Deploy**.
+2. Vercel will run `npm run build` to compile the Next.js dashboard, chat page, comparison page, and mind mapper.
+3. Within 60 seconds, you will see a congratulations screen indicating your project is live!
+4. Click the preview screen to open your public ResearchMate MVP link (e.g., `https://researchmate-frontend.vercel.app`).
+
+---
+
+## 🔧 Part 3: Troubleshooting
+
+### The Chatbot is loading forever or throws an error
+*   **Cause**: The Render backend spins down to save resources on the Free tier if it doesn't receive any requests for 15 minutes. The first query after it falls asleep can take 30-50 seconds to "wake up" the server container.
+*   **Solution**: Give it a few seconds, refresh your browser tab, and check the Service Health status indicator in your Sidebar (it should turn green once the backend wakes up).
+
+### Uploaded Files vanish after a day
+*   **Cause**: Render's free instances use an ephemeral filesystem. Every time Render redeploys your app or restarts the container, the uploads directory is reset.
+*   **Solution**: To get permanent storage in production, you can attach a persistent volume (Render Starter tier, $7/month) to the `/data` path, or use local tunneling (via `ngrok`) to showcase your project locally during evaluations.
