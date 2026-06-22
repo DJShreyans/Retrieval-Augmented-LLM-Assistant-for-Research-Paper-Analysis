@@ -9,7 +9,9 @@ import {
   Database,
   Award,
   Link2,
-  GitFork
+  GitFork,
+  Cpu,
+  ChevronDown
 } from "lucide-react";
 
 export default function DocumentMindMap() {
@@ -19,12 +21,13 @@ export default function DocumentMindMap() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [activeListLoading, setActiveListLoading] = useState(true);
+  const [models, setModels] = useState([]);
+  const [selectedModel, setSelectedModel] = useState("");
 
-  // Load available documents for menu selector
   useEffect(() => {
     async function loadDocs() {
       try {
-        const res = await fetch("http://localhost:8000/documents");
+        const res = await fetch("http://127.0.0.1:8000/documents");
         if (res.ok) {
           const data = await res.json();
           setDocuments(data);
@@ -38,7 +41,27 @@ export default function DocumentMindMap() {
         setActiveListLoading(false);
       }
     }
+    
+    async function loadModels() {
+      try {
+        const res = await fetch("http://127.0.0.1:8000/models");
+        if (res.ok) {
+          const data = await res.json();
+          setModels(data.models);
+          const firstAvailable = data.models.find(m => m.available);
+          if (firstAvailable) {
+            setSelectedModel(firstAvailable.id);
+          } else if (data.models.length > 0) {
+            setSelectedModel(data.models[0].id);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load models list:", err);
+      }
+    }
+    
     loadDocs();
+    loadModels();
   }, []);
 
   // Fetch mind map data from API
@@ -53,11 +76,12 @@ export default function DocumentMindMap() {
     setMindmapData(null);
 
     try {
-      const res = await fetch("http://localhost:8000/mindmap", {
+      const res = await fetch("http://127.0.0.1:8000/mindmap", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          doc_id: selectedDoc
+          doc_id: selectedDoc,
+          model: selectedModel || null
         })
       });
 
@@ -65,11 +89,20 @@ export default function DocumentMindMap() {
         const data = await res.json();
         setMindmapData(data);
       } else {
-        const errDetail = await res.json();
-        setError(errDetail.detail || "Failed to generate conceptual mind map.");
+        let errDetail;
+        try {
+          errDetail = await res.json();
+        } catch (parseErr) {
+          errDetail = { detail: `Server error: ${res.status} ${res.statusText}` };
+        }
+        const errorMsg = typeof errDetail.detail === 'string' 
+          ? errDetail.detail 
+          : JSON.stringify(errDetail.detail) || "Failed to generate conceptual mind map.";
+        setError(errorMsg);
       }
     } catch (err) {
-      setError("Could not connect to backend server on port 8000.");
+      console.error(err);
+      setError(err.message || "Could not connect to backend server on port 8000.");
     } finally {
       setLoading(false);
     }
@@ -106,50 +139,77 @@ export default function DocumentMindMap() {
             </a>
           </div>
         ) : (
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-            
-            {/* Target Select */}
-            <div className="flex-1 space-y-2">
-              <label className="text-xs font-semibold text-gray-400 tracking-wide uppercase">Select Target Resource</label>
-              <div className="relative">
+          <div className="space-y-6">
+            {/* Model Selector Row */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-darkBorder pb-4">
+              <div className="flex items-center gap-2">
+                <Cpu className="w-4 h-4 text-indigo-400" />
+                <span className="text-xs font-bold text-white uppercase tracking-wider">Analysis Model</span>
+              </div>
+              <div className="relative w-full md:w-64">
                 <select
-                  value={selectedDoc}
-                  onChange={(e) => setSelectedDoc(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl bg-darkBg border border-darkBorder focus:border-brandPrimary/85 text-white text-sm focus:outline-none focus:ring-0 appearance-none cursor-pointer pr-10"
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  className="w-full pl-4 pr-10 py-2.5 rounded-xl bg-darkBg border border-darkBorder focus:border-brandPrimary/85 text-white text-xs focus:outline-none focus:ring-0 appearance-none cursor-pointer"
                 >
-                  {documents.map((doc, idx) => {
-                    const isUrl = doc.source_type === "url" || doc.type === "url";
-                    return (
-                      <option key={idx} value={doc.filename}>
-                        {isUrl ? `🌐 ${doc.title || doc.filename}` : `📄 ${doc.filename}`}
-                      </option>
-                    );
-                  })}
+                  {models.map((m) => (
+                    <option key={m.id} value={m.id} disabled={!m.available}>
+                      {m.name} {!m.available ? " (Unavailable)" : ""}
+                    </option>
+                  ))}
                 </select>
                 <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
-                  <FileText className="w-4 h-4" />
+                  <ChevronDown className="w-3.5 h-3.5" />
                 </div>
               </div>
             </div>
 
-            {/* Run Button */}
-            <button
-              onClick={handleGenerateMindMap}
-              disabled={loading}
-              className="mt-6 px-6 py-3.5 rounded-xl bg-brandPrimary hover:bg-indigo-600 disabled:bg-gray-850 text-white disabled:text-gray-500 font-semibold text-sm transition-all duration-200 flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/10 hover:shadow-indigo-600/25 shrink-0"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="w-4 h-4 text-white animate-spin" />
-                  Generating Map...
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-4 h-4 text-white" />
-                  Generate Mind Map
-                </>
-              )}
-            </button>
+            {/* Target selector row */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+              
+              {/* Target Select */}
+              <div className="flex-1 space-y-2">
+                <label className="text-xs font-semibold text-gray-400 tracking-wide uppercase">Select Target Resource</label>
+                <div className="relative">
+                  <select
+                    value={selectedDoc}
+                    onChange={(e) => setSelectedDoc(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl bg-darkBg border border-darkBorder focus:border-brandPrimary/85 text-white text-sm focus:outline-none focus:ring-0 appearance-none cursor-pointer pr-10"
+                  >
+                    {documents.map((doc, idx) => {
+                      const isUrl = doc.source_type === "url" || doc.type === "url";
+                      return (
+                        <option key={idx} value={doc.filename}>
+                          {isUrl ? `🌐 ${doc.title || doc.filename}` : `📄 ${doc.filename}`}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+                    <FileText className="w-4 h-4" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Run Button */}
+              <button
+                onClick={handleGenerateMindMap}
+                disabled={loading}
+                className="mt-6 px-6 py-3.5 rounded-xl bg-brandPrimary hover:bg-indigo-600 disabled:bg-gray-850 text-white disabled:text-gray-500 font-semibold text-sm transition-all duration-200 flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/10 hover:shadow-indigo-600/25 shrink-0"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 text-white animate-spin" />
+                    Generating Map...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4 text-white" />
+                    Generate Mind Map
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         )}
 
@@ -187,11 +247,15 @@ export default function DocumentMindMap() {
             </div>
             
             <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider border ${
-              mindmapData.mode === "offline_fallback"
-                ? "bg-amber-500/10 border-amber-500/20 text-amber-400"
-                : "bg-purple-500/10 border-purple-500/20 text-purple-400"
+              mindmapData.mode === "nvidia_cloud"
+                ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400 shadow-sm shadow-emerald-500/5"
+                : mindmapData.mode === "ollama_local"
+                ? "bg-blue-500/10 border-blue-500/20 text-blue-400"
+                : "bg-amber-500/10 border-amber-500/20 text-amber-400"
             }`}>
-              {mindmapData.mode === "offline_fallback" ? "Offline Synthesizer" : "Online Synthesizer"}
+              {mindmapData.mode === "nvidia_cloud" && (mindmapData.model === "moonshotai/kimi-k2.6" ? "NVIDIA Cloud (Kimi K2.6)" : "NVIDIA Cloud (Llama-3.3)")}
+              {mindmapData.mode === "ollama_local" && "Ollama Local"}
+              {mindmapData.mode === "offline_fallback" && "Offline Fallback"}
             </span>
           </div>
 
@@ -202,7 +266,7 @@ export default function DocumentMindMap() {
             <div className="shrink-0 flex items-center justify-center p-6 rounded-2xl bg-indigo-500/10 border-2 border-brandPrimary text-white font-extrabold text-xs max-w-[220px] text-center relative shadow-lg">
               <div className="flex flex-col gap-1.5">
                 <span className="text-[9px] uppercase font-bold tracking-wider text-indigo-400">Target</span>
-                <span className="truncate max-w-[180px]">{mindmapData.name}</span>
+                <span className="truncate max-w-[180px]">{mindmapData.name || mindmapData.title || "Document Topic"}</span>
               </div>
               {/* Line connector to column 2 */}
               <div className="absolute right-0 top-1/2 w-8 h-0.5 bg-indigo-500/30 -mr-8"></div>
@@ -210,7 +274,7 @@ export default function DocumentMindMap() {
             
             {/* Level 2 Nodes: Main Branches */}
             <div className="flex flex-col gap-8 shrink-0 relative pl-8 border-l border-indigo-500/25">
-              {mindmapData.children.map((branch, bIdx) => (
+              {(mindmapData.children || mindmapData.branches || []).map((branch, bIdx) => (
                 <div key={bIdx} className="flex items-center gap-8 relative py-2">
                   {/* Left connector to parent line */}
                   <div className="absolute left-0 top-1/2 w-8 h-0.5 bg-indigo-500/20 -ml-8"></div>

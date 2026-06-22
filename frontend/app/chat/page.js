@@ -15,33 +15,173 @@ import {
   ThumbsUp,
   ThumbsDown,
   Copy,
-  Check
+  Check,
+  Cpu
 } from "lucide-react";
-// Human-like word-by-word streaming simulation component
-function Typewriter({ text, speed = 25, onComplete }) {
-  const [displayedText, setDisplayedText] = useState("");
-  
-  useEffect(() => {
-    const words = text.split(" ");
-    setDisplayedText("");
-    let idx = 0;
-    
-    if (words.length === 0) return;
-    
-    const interval = setInterval(() => {
-      setDisplayedText((prev) => prev + (prev ? " " : "") + words[idx]);
-      idx++;
-      if (idx >= words.length) {
-        clearInterval(interval);
-        if (onComplete) onComplete();
-      }
-    }, speed);
-    
-    return () => clearInterval(interval);
-  }, [text, speed]);
-  
-  return <span className="whitespace-pre-line leading-relaxed">{displayedText}</span>;
+// Helper to parse inline markdown tags: **bold**, *italic*, `code`, and [1]/[Ref 1] citation badges
+function parseInlineStyles(text, onCitationClick) {
+  if (!text) return "";
+  const tokenRegex = /(`[^`\n]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[(?:Ref\s+)?\d+\])/g;
+  const parts = text.split(tokenRegex);
+  return parts.map((part, index) => {
+    if (part.startsWith('`') && part.endsWith('`')) {
+      return (
+        <code key={index} className="px-1.5 py-0.5 rounded bg-gray-900 border border-gray-700 text-pink-400 font-mono text-xs">
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={index} className="font-bold text-white">{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith('*') && part.endsWith('*')) {
+      return <em key={index} className="italic text-gray-300">{part.slice(1, -1)}</em>;
+    }
+    const citeMatch = part.match(/^\[(?:Ref\s+)?(\d+)\]$/);
+    if (citeMatch) {
+      const num = parseInt(citeMatch[1], 10);
+      return (
+        <button
+          key={index}
+          type="button"
+          onClick={() => onCitationClick && onCitationClick(num)}
+          className="inline-flex items-center justify-center mx-0.5 px-1.5 py-0.5 rounded-md bg-indigo-500/20 hover:bg-indigo-500/40 text-indigo-300 border border-indigo-500/30 hover:border-indigo-400/50 text-[10px] font-bold cursor-pointer transition-all duration-150 shadow-sm shadow-indigo-500/10 hover:shadow-indigo-500/30 transform hover:-translate-y-0.5 active:translate-y-0"
+          title={`Jump to Reference [${num}]`}
+        >
+          [{num}]
+        </button>
+      );
+    }
+    return part;
+  });
 }
+
+// Helper to split text into block-level markdown structures: headers, codeblocks, lists, paragraphs
+function renderMarkdown(text, onCitationClick) {
+  if (!text) return null;
+  const lines = text.split("\n");
+  const elements = [];
+  let currentUnorderedList = [];
+  let currentOrderedList = [];
+  let isInsideCodeBlock = false;
+  let codeBlockLines = [];
+  let codeBlockLang = "";
+  const flushLists = (key) => {
+    if (currentUnorderedList.length > 0) {
+      elements.push(
+        <ul key={`ul-${key}`} className="list-disc pl-5 my-2 space-y-1.5 text-gray-300">
+          {currentUnorderedList.map((item, idx) => (
+            <li key={idx} className="leading-relaxed">
+              {parseInlineStyles(item, onCitationClick)}
+            </li>
+          ))}
+        </ul>
+      );
+      currentUnorderedList = [];
+    }
+    if (currentOrderedList.length > 0) {
+      elements.push(
+        <ol key={`ol-${key}`} className="list-decimal pl-5 my-2 space-y-1.5 text-gray-300">
+          {currentOrderedList.map((item, idx) => (
+            <li key={idx} className="leading-relaxed">
+              {parseInlineStyles(item, onCitationClick)}
+            </li>
+          ))}
+        </ol>
+      );
+      currentOrderedList = [];
+    }
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.startsWith("```")) {
+      if (isInsideCodeBlock) {
+        isInsideCodeBlock = false;
+        const codeText = codeBlockLines.join("\n");
+        elements.push(
+          <pre key={`code-${i}`} className="p-4 rounded-xl bg-gray-950 border border-gray-800 text-gray-300 font-mono text-xs overflow-x-auto my-3 leading-relaxed">
+            <code className={codeBlockLang ? `language-${codeBlockLang}` : ""}>
+              {codeText}
+            </code>
+          </pre>
+        );
+        codeBlockLines = [];
+        codeBlockLang = "";
+      } else {
+        flushLists(i);
+        isInsideCodeBlock = true;
+        codeBlockLang = line.slice(3).trim();
+      }
+      continue;
+    }
+    if (isInsideCodeBlock) {
+      codeBlockLines.push(line);
+      continue;
+    }
+    if (line.startsWith("#### ")) {
+      flushLists(i);
+      elements.push(
+        <h5 key={`h5-${i}`} className="text-xs font-bold text-white mt-4 mb-1.5">
+          {parseInlineStyles(line.slice(5), onCitationClick)}
+        </h5>
+      );
+      continue;
+    }
+    if (line.startsWith("### ")) {
+      flushLists(i);
+      elements.push(
+        <h4 key={`h4-${i}`} className="text-sm font-bold text-white mt-4.5 mb-2 border-b border-darkBorder/30 pb-0.5">
+          {parseInlineStyles(line.slice(4), onCitationClick)}
+        </h4>
+      );
+      continue;
+    }
+    if (line.startsWith("## ")) {
+      flushLists(i);
+      elements.push(
+        <h3 key={`h3-${i}`} className="text-base font-bold text-white mt-5.5 mb-2.5 border-b border-darkBorder/60 pb-1">
+          {parseInlineStyles(line.slice(3), onCitationClick)}
+        </h3>
+      );
+      continue;
+    }
+    if (line.startsWith("# ")) {
+      flushLists(i);
+      elements.push(
+        <h2 key={`h2-${i}`} className="text-lg font-bold text-white mt-6.5 mb-3.5 border-b border-darkBorder pb-1.5">
+          {parseInlineStyles(line.slice(2), onCitationClick)}
+        </h2>
+      );
+      continue;
+    }
+    const ulMatch = line.match(/^[-*+]\s+(.*)$/);
+    if (ulMatch) {
+      flushLists(i);
+      currentUnorderedList.push(ulMatch[1]);
+      continue;
+    }
+    const olMatch = line.match(/^\d+\.\s+(.*)$/);
+    if (olMatch) {
+      flushLists(i);
+      currentOrderedList.push(olMatch[1]);
+      continue;
+    }
+    if (line.trim() === "") {
+      flushLists(i);
+      continue;
+    }
+    flushLists(i);
+    elements.push(
+      <p key={`p-${i}`} className="my-2 leading-relaxed text-gray-300">
+        {parseInlineStyles(line, onCitationClick)}
+      </p>
+    );
+  }
+  flushLists(lines.length);
+  return <div className="space-y-1">{elements}</div>;
+}
+
+
 export default function ChatWithDocuments() {
   const [documents, setDocuments] = useState([]);
   const [selectedDocs, setSelectedDocs] = useState([]); // Filter list
@@ -53,13 +193,34 @@ export default function ChatWithDocuments() {
   const [copiedIndex, setCopiedIndex] = useState(null);
   const [reactions, setReactions] = useState({}); // { [index]: 'like' | 'dislike' }
   const [feedbackToast, setFeedbackToast] = useState("");
+  const [models, setModels] = useState([]);
+  const [selectedModel, setSelectedModel] = useState("");
   
   const messagesEndRef = useRef(null);
-  // Load document list to populate scope selector
+  
+  const handleCitationClick = (msgIdx, citationNum) => {
+    const detailsId = `details-citations-${msgIdx}`;
+    const targetId = `citation-${msgIdx}-${citationNum}`;
+    const detailsElem = document.getElementById(detailsId);
+    if (detailsElem) {
+      detailsElem.open = true;
+      setTimeout(() => {
+        const targetElem = document.getElementById(targetId);
+        if (targetElem) {
+          targetElem.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          targetElem.classList.add("bg-indigo-500/25");
+          setTimeout(() => {
+            targetElem.classList.remove("bg-indigo-500/25");
+          }, 1500);
+        }
+      }, 100);
+    }
+  };
+  // Load document list to populate scope selector & load models
   useEffect(() => {
     async function loadDocs() {
       try {
-        const res = await fetch("http://localhost:8000/documents");
+        const res = await fetch("http://127.0.0.1:8000/documents");
         if (res.ok) {
           const data = await res.json();
           setDocuments(data);
@@ -68,7 +229,28 @@ export default function ChatWithDocuments() {
         console.error("Failed to load documents:", err);
       }
     }
+    
+    async function loadModels() {
+      try {
+        const res = await fetch("http://127.0.0.1:8000/models");
+        if (res.ok) {
+          const data = await res.json();
+          setModels(data.models);
+          // Set default to first available model
+          const firstAvailable = data.models.find(m => m.available);
+          if (firstAvailable) {
+            setSelectedModel(firstAvailable.id);
+          } else if (data.models.length > 0) {
+            setSelectedModel(data.models[0].id);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load models:", err);
+      }
+    }
+    
     loadDocs();
+    loadModels();
   }, []);
   // Scroll to bottom of message thread on update
   useEffect(() => {
@@ -87,34 +269,90 @@ export default function ChatWithDocuments() {
     e?.preventDefault();
     const activeQuery = query.trim();
     if (!activeQuery || loading) return;
+    
     // Add user message to thread
     const userMsg = { role: "user", text: activeQuery };
     setMessages(prev => [...prev, userMsg]);
     setQuery("");
     setLoading(true);
     setError(null);
+    
     try {
-      const res = await fetch("http://localhost:8000/chat", {
+      const res = await fetch("http://127.0.0.1:8000/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           query: activeQuery,
-          document_ids: selectedDocs.length > 0 ? selectedDocs : null
+          document_ids: selectedDocs.length > 0 ? selectedDocs : null,
+          model: selectedModel || null
         })
       });
-      if (res.ok) {
-        const data = await res.json();
-        const assistantMsg = {
-          role: "assistant",
-          text: data.answer,
-          citations: data.citations || [],
-          retrieved: data.retrieved_context || [],
-          mode: data.mode // 'mistral_cloud', 'ollama_local', 'offline_fallback'
-        };
-        setMessages(prev => [...prev, assistantMsg]);
-      } else {
+      
+      if (!res.ok) {
         const errData = await res.json();
         setError(errData.detail || "Search and retrieval failed.");
+        setLoading(false);
+        return;
+      }
+      
+      // Initialize an empty assistant message
+      const assistantMsg = {
+        role: "assistant",
+        text: "",
+        citations: [],
+        retrieved: [],
+        mode: ""
+      };
+      
+      setMessages(prev => [...prev, assistantMsg]);
+      
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop(); // Keep the last partial line in the buffer
+        
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith("data: ")) {
+            try {
+              const parsed = JSON.parse(trimmed.slice(6));
+              
+              if (parsed.type === "metadata") {
+                setMessages(prev => {
+                  if (prev.length === 0) return prev;
+                  const updated = [...prev];
+                  const lastMsg = { ...updated[updated.length - 1] };
+                  lastMsg.citations = parsed.citations || [];
+                  lastMsg.retrieved = parsed.retrieved_context || [];
+                  lastMsg.mode = parsed.mode || "";
+                  lastMsg.model = parsed.model || "";
+                  updated[updated.length - 1] = lastMsg;
+                  return updated;
+                });
+              } else if (parsed.type === "chunk") {
+                setMessages(prev => {
+                  if (prev.length === 0) return prev;
+                  const updated = [...prev];
+                  const lastMsg = { ...updated[updated.length - 1] };
+                  lastMsg.text += parsed.content;
+                  updated[updated.length - 1] = lastMsg;
+                  return updated;
+                });
+              } else if (parsed.type === "error") {
+                setError(parsed.content);
+              }
+            } catch (err) {
+              console.error("Failed to parse SSE line:", trimmed, err);
+            }
+          }
+        }
       }
     } catch (err) {
       setError("Cannot reach FastAPI server. Verify your backend is running on port 8000.");
@@ -176,58 +414,83 @@ export default function ChatWithDocuments() {
             Scoped queries query ChromaDB and generate context-grounded AI answers.
           </p>
         </div>
-        {/* Dynamic scope selector */}
-        <div className="relative">
-          <button
-            onClick={() => setShowDocSelector(!showDocSelector)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-white font-semibold text-xs border border-darkBorder hover:border-gray-600 transition-colors"
-          >
-            <span>Query Scope:</span>
-            <span className="text-indigo-400 font-bold">
-              {selectedDocs.length === 0 ? "All Documents" : `${selectedDocs.length} Selected`}
-            </span>
-            {showDocSelector ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-          </button>
-          {showDocSelector && (
-            <div className="absolute right-0 mt-2 w-72 bg-darkCard border border-darkBorder rounded-xl p-3 shadow-2xl z-30 space-y-2">
-              <div className="flex items-center justify-between border-b border-darkBorder pb-2 mb-2">
-                <span className="text-[10px] uppercase font-bold text-gray-400">Target Files</span>
-                {selectedDocs.length > 0 && (
-                  <button 
-                    onClick={() => setSelectedDocs([])}
-                    className="text-[10px] text-indigo-400 hover:underline font-semibold"
-                  >
-                    Clear Filter
-                  </button>
-                )}
-              </div>
-              <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
-                {documents.length === 0 ? (
-                  <p className="text-xs text-gray-500 text-center py-4">No documents available. Upload files first.</p>
-                ) : (
-                  documents.map((doc, idx) => {
-                    const isUrl = doc.source_type === "url" || doc.type === "url";
-                    return (
-                      <label 
-                        key={idx} 
-                        className="flex items-center gap-2 px-1.5 py-2 rounded-lg hover:bg-gray-800/45 cursor-pointer text-xs text-gray-300 transition-colors"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedDocs.includes(doc.filename)}
-                          onChange={() => toggleDocSelection(doc.filename)}
-                          className="rounded border-darkBorder text-brandPrimary focus:ring-0 bg-darkBg mr-1"
-                        />
-                        <span className="truncate flex-1" title={doc.filename}>
-                          {isUrl ? `🌐 ${doc.title || doc.filename}` : `📄 ${doc.filename}`}
-                        </span>
-                      </label>
-                    );
-                  })
-                )}
-              </div>
+        
+        {/* Selector Controls */}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Dynamic Model Selector */}
+          <div className="relative">
+            <select
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              className="flex items-center gap-2 pl-9 pr-10 py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-white font-semibold text-xs border border-darkBorder hover:border-gray-600 transition-colors appearance-none cursor-pointer focus:outline-none focus:ring-0"
+            >
+              {models.map((m) => (
+                <option key={m.id} value={m.id} className="bg-darkCard text-gray-300 py-2" disabled={!m.available}>
+                  {m.name} {!m.available ? " (Unavailable)" : ""}
+                </option>
+              ))}
+            </select>
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-indigo-400">
+              <Cpu className="w-3.5 h-3.5" />
             </div>
-          )}
+            <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+              <ChevronDown className="w-3.5 h-3.5" />
+            </div>
+          </div>
+
+          {/* Dynamic scope selector */}
+          <div className="relative">
+            <button
+              onClick={() => setShowDocSelector(!showDocSelector)}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-white font-semibold text-xs border border-darkBorder hover:border-gray-600 transition-colors"
+            >
+              <span>Query Scope:</span>
+              <span className="text-indigo-400 font-bold">
+                {selectedDocs.length === 0 ? "All Documents" : `${selectedDocs.length} Selected`}
+              </span>
+              {showDocSelector ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </button>
+            {showDocSelector && (
+              <div className="absolute right-0 mt-2 w-72 bg-darkCard border border-darkBorder rounded-xl p-3 shadow-2xl z-30 space-y-2">
+                <div className="flex items-center justify-between border-b border-darkBorder pb-2 mb-2">
+                  <span className="text-[10px] uppercase font-bold text-gray-400">Target Files</span>
+                  {selectedDocs.length > 0 && (
+                    <button 
+                      onClick={() => setSelectedDocs([])}
+                      className="text-[10px] text-indigo-400 hover:underline font-semibold"
+                    >
+                      Clear Filter
+                    </button>
+                  )}
+                </div>
+                <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
+                  {documents.length === 0 ? (
+                    <p className="text-xs text-gray-500 text-center py-4">No documents available. Upload files first.</p>
+                  ) : (
+                    documents.map((doc, idx) => {
+                      const isUrl = doc.source_type === "url" || doc.type === "url";
+                      return (
+                        <label 
+                          key={idx} 
+                          className="flex items-center gap-2 px-1.5 py-2 rounded-lg hover:bg-gray-800/45 cursor-pointer text-xs text-gray-300 transition-colors"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedDocs.includes(doc.filename)}
+                            onChange={() => toggleDocSelection(doc.filename)}
+                            className="rounded border-darkBorder text-brandPrimary focus:ring-0 bg-darkBg mr-1"
+                          />
+                          <span className="truncate flex-1" title={doc.filename}>
+                            {isUrl ? `🌐 ${doc.title || doc.filename}` : `📄 ${doc.filename}`}
+                          </span>
+                        </label>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
       {/* Main Messages Feed Area */}
@@ -275,14 +538,14 @@ export default function ChatWithDocuments() {
                     {/* Mode Status Badge for assistant answers */}
                     {!isUser && msg.mode && (
                       <div className="flex items-center gap-1.5 mb-0.5">
-                        <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase border tracking-wider ${
-                          msg.mode === "mistral_cloud"
-                            ? "bg-purple-500/10 border-purple-500/20 text-purple-400"
+                        <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase border tracking-wider transition-all duration-200 ${
+                          msg.mode === "nvidia_cloud"
+                            ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400 shadow-sm shadow-emerald-500/5"
                             : msg.mode === "ollama_local"
                             ? "bg-blue-500/10 border-blue-500/20 text-blue-400"
                             : "bg-amber-500/10 border-amber-500/20 text-amber-400"
                         }`}>
-                          {msg.mode === "mistral_cloud" && "Mistral Cloud"}
+                          {msg.mode === "nvidia_cloud" && (msg.model === "moonshotai/kimi-k2.6" ? "NVIDIA Cloud (Kimi K2.6)" : "NVIDIA Cloud (Llama-3.3)")}
                           {msg.mode === "ollama_local" && "Ollama Local"}
                           {msg.mode === "offline_fallback" && "Offline Fallback"}
                         </span>
@@ -296,12 +559,9 @@ export default function ChatWithDocuments() {
                         : "bg-darkCard text-gray-200 border-darkBorder rounded-tl-none"
                     }`}>
                       {isUser ? (
-                        <p className="whitespace-pre-line">{msg.text}</p>
-                      ) : isLatest ? (
-                        // Typewriter on the latest AI message for organic feel
-                        <Typewriter text={msg.text} />
+                        <p className="whitespace-pre-line text-white">{msg.text}</p>
                       ) : (
-                        <p className="whitespace-pre-line">{msg.text}</p>
+                        renderMarkdown(msg.text, (num) => handleCitationClick(i, num))
                       )}
                     </div>
                     {/* Reactions & Copy toolbar (Assistant Only) */}
@@ -338,7 +598,10 @@ export default function ChatWithDocuments() {
                     {/* Citations Box for AI answers */}
                     {!isUser && msg.citations && msg.citations.length > 0 && (
                       <div className="w-full mt-2 space-y-1">
-                        <details className="group bg-darkBg border border-darkBorder/60 rounded-xl overflow-hidden transition-all duration-200">
+                        <details 
+                          id={`details-citations-${i}`}
+                          className="group bg-darkBg border border-darkBorder/60 rounded-xl overflow-hidden transition-all duration-200"
+                        >
                           <summary className="p-3 text-xs font-semibold text-gray-400 cursor-pointer flex items-center justify-between hover:bg-gray-800/20">
                             <span className="flex items-center gap-2">
                               <Sparkles className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
@@ -351,15 +614,32 @@ export default function ChatWithDocuments() {
                             {msg.citations.map((c, cIdx) => {
                               // Find chunks related to this source to display text snippet
                               const relatedChunks = msg.retrieved.filter(ch => ch.source === c.filename);
+                              const isUrl = c.filename.startsWith("http://") || c.filename.startsWith("https://");
                               return (
-                                <div key={cIdx} className="text-xs space-y-1.5 pt-2 first:pt-0">
+                                <div 
+                                  key={cIdx} 
+                                  id={`citation-${i}-${c.index}`}
+                                  className="text-xs space-y-1.5 pt-2 pb-2 first:pt-0 rounded-lg transition-all duration-300"
+                                >
                                   <div className="flex items-center gap-2">
-                                    <span className="w-5 h-5 rounded-md bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center font-bold text-[10px] text-indigo-400">
+                                    <span className="w-5 h-5 rounded-md bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center font-bold text-[10px] text-indigo-400 shrink-0">
                                       {c.index}
                                     </span>
-                                    <span className="font-semibold text-white truncate max-w-[250px] md:max-w-md" title={c.filename}>
-                                      {c.filename}
-                                    </span>
+                                    {isUrl ? (
+                                      <a 
+                                        href={c.filename} 
+                                        target="_blank" 
+                                        rel="noopener noreferrer" 
+                                        className="font-semibold text-indigo-400 hover:text-indigo-300 underline truncate max-w-[250px] md:max-w-md flex items-center gap-1"
+                                        title={c.filename}
+                                      >
+                                        🌐 {c.filename}
+                                      </a>
+                                    ) : (
+                                      <span className="font-semibold text-white truncate max-w-[250px] md:max-w-md" title={c.filename}>
+                                        📄 {c.filename}
+                                      </span>
+                                    )}
                                   </div>
                                   
                                   {relatedChunks.map((ch, chIdx) => (

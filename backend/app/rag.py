@@ -211,10 +211,22 @@ def ingest_document(file_name: str, file_path: str) -> dict:
         "total_characters": len(text)
     }
 
-def query_vector_store(query_text: str, file_filter: list[str] = None, top_k: int = 4) -> list[dict]:
+# Lazily initialized cross-encoder for semantic re-ranking
+_reranker_model = None
+
+def get_reranker():
+    global _reranker_model
+    if _reranker_model is None:
+        from sentence_transformers import CrossEncoder
+        # Use CPU by default, it is fast enough for small candidate sizes
+        _reranker_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+    return _reranker_model
+
+def query_vector_store(query_text: str, file_filter: list[str] = None, top_k: int = 4, rerank: bool = True) -> list[dict]:
     """
     Queries ChromaDB for the most relevant document chunks matching a query.
     Can filter results to specific uploaded document names.
+    If rerank is True, retrieves candidates and re-ranks them using MS-MARCO Cross-Encoder.
     """
     where_clause = {}
     if file_filter:
@@ -223,9 +235,12 @@ def query_vector_store(query_text: str, file_filter: list[str] = None, top_k: in
         else:
             where_clause = {"$or": [{"source": f} for f in file_filter]}
             
+    # Retrieve more candidate chunks if we are re-ranking
+    query_k = top_k * 3 if rerank else top_k
+    
     results = collection.query(
         query_texts=[query_text],
-        n_results=top_k,
+        n_results=query_k,
         where=where_clause if file_filter else None
     )
     
@@ -245,7 +260,25 @@ def query_vector_store(query_text: str, file_filter: list[str] = None, top_k: in
                 "score": 1 - distances[i]  # Convert distance to similarity score
             })
             
-    return formatted_results
+    # Re-rank candidate results using Cross-Encoder
+    if rerank and len(formatted_results) > 1:
+        try:
+            model = get_reranker()
+            pairs = [(query_text, item["content"]) for item in formatted_results]
+            scores = model.predict(pairs)
+            
+            for idx, score in enumerate(scores):
+                formatted_results[idx]["rerank_score"] = float(score)
+                # Normalize cross-encoder output (logit score) slightly for display similarity
+                # Simple sigmoid-like mapping or clamping
+                formatted_results[idx]["score"] = float(score)
+                
+            # Sort by re-ranked scores (descending)
+            formatted_results.sort(key=lambda x: x["rerank_score"], reverse=True)
+        except Exception as e:
+            print(f"[Reranker] Failed to run cross-encoder re-ranking: {e}")
+            
+    return formatted_results[:top_k]
 
 def delete_document_from_vector_store(file_name: str):
     """Deletes all vectorized chunks associated with a document from ChromaDB."""

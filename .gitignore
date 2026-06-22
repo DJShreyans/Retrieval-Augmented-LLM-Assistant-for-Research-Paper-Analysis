@@ -21,11 +21,13 @@ __pycache__/
 .pytest_cache/
 .ipynb_checkpoints/
 
-# Local databases and uploaded data
+# Local databases, uploads, and fine-tuning output
 backend/data/chromadb/
 backend/data/uploads/*
 !backend/data/uploads/.gitkeep
 backend/data/documents_metadata.json
+backend/finetuning_dataset.jsonl
+backend/lora_adapters/
 
 # Local configurations and secret keys
 .env

@@ -7,10 +7,34 @@ import {
   FileText, 
   Sparkles, 
   Loader2, 
-  AlertCircle,
-  FileCheck,
-  Award
+  AlertCircle, 
+  FileCheck, 
+  Award,
+  Cpu,
+  ChevronDown
 } from "lucide-react";
+
+// Helper to extract values from comparison objects robustly, supporting case-insensitive keys
+function getCellValue(sectionObj, docIndex) {
+  if (!sectionObj || typeof sectionObj !== "object") return "Not specified.";
+  const keys = Object.keys(sectionObj);
+  if (keys.length === 0) return "Not specified.";
+  
+  // 1. Try to find a key matching "doc1" / "doc2" case-insensitively or containing the index
+  const matchKey = keys.find(k => {
+    const lk = k.toLowerCase();
+    return lk.includes(`doc${docIndex}`) || lk.includes(`document${docIndex}`) || lk.endsWith(docIndex.toString());
+  });
+  if (matchKey) {
+    return sectionObj[matchKey];
+  }
+  
+  // 2. Fall back to insertion order: first key for doc1, second key for doc2
+  if (docIndex === 1 && keys.length > 0) return sectionObj[keys[0]];
+  if (docIndex === 2 && keys.length > 1) return sectionObj[keys[1]];
+  
+  return "Not specified.";
+}
 
 export default function CompareDocuments() {
   const [documents, setDocuments] = useState([]);
@@ -20,12 +44,14 @@ export default function CompareDocuments() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [activeListLoading, setActiveListLoading] = useState(true);
+  const [models, setModels] = useState([]);
+  const [selectedModel, setSelectedModel] = useState("");
 
   // Load available documents for dropdown menus
   useEffect(() => {
     async function loadDocs() {
       try {
-        const res = await fetch("http://localhost:8000/documents");
+        const res = await fetch("http://127.0.0.1:8000/documents");
         if (res.ok) {
           const data = await res.json();
           setDocuments(data);
@@ -40,7 +66,27 @@ export default function CompareDocuments() {
         setActiveListLoading(false);
       }
     }
+    
+    async function loadModels() {
+      try {
+        const res = await fetch("http://127.0.0.1:8000/models");
+        if (res.ok) {
+          const data = await res.json();
+          setModels(data.models);
+          const firstAvailable = data.models.find(m => m.available);
+          if (firstAvailable) {
+            setSelectedModel(firstAvailable.id);
+          } else if (data.models.length > 0) {
+            setSelectedModel(data.models[0].id);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load models list:", err);
+      }
+    }
+    
     loadDocs();
+    loadModels();
   }, []);
 
   // Trigger FastAPI comparison endpoint
@@ -59,12 +105,13 @@ export default function CompareDocuments() {
     setComparison(null);
 
     try {
-      const res = await fetch("http://localhost:8000/compare", {
+      const res = await fetch("http://127.0.0.1:8000/compare", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           doc1_id: doc1,
-          doc2_id: doc2
+          doc2_id: doc2,
+          model: selectedModel || null
         })
       });
 
@@ -129,79 +176,106 @@ export default function CompareDocuments() {
             </a>
           </div>
         ) : (
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-            
-            {/* Dropdown 1 */}
-            <div className="flex-1 space-y-2">
-              <label className="text-xs font-semibold text-gray-400 tracking-wide uppercase">Document A</label>
-              <div className="relative">
+          <div className="space-y-6">
+            {/* Model Selector Row */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-darkBorder pb-4">
+              <div className="flex items-center gap-2">
+                <Cpu className="w-4 h-4 text-indigo-400" />
+                <span className="text-xs font-bold text-white uppercase tracking-wider">Analysis Model</span>
+              </div>
+              <div className="relative w-full md:w-64">
                 <select
-                  value={doc1}
-                  onChange={(e) => setDoc1(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl bg-darkBg border border-darkBorder focus:border-brandPrimary/85 text-white text-sm focus:outline-none focus:ring-0 appearance-none cursor-pointer pr-10"
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  className="w-full pl-4 pr-10 py-2.5 rounded-xl bg-darkBg border border-darkBorder focus:border-brandPrimary/85 text-white text-xs focus:outline-none focus:ring-0 appearance-none cursor-pointer"
                 >
-                  {documents.map((doc, idx) => {
-                    const isUrl = doc.source_type === "url" || doc.type === "url";
-                    return (
-                      <option key={idx} value={doc.filename} disabled={doc.filename === doc2}>
-                        {isUrl ? `🌐 ${doc.title || doc.filename}` : `📄 ${doc.filename}`}
-                      </option>
-                    );
-                  })}
+                  {models.map((m) => (
+                    <option key={m.id} value={m.id} disabled={!m.available}>
+                      {m.name} {!m.available ? " (Unavailable)" : ""}
+                    </option>
+                  ))}
                 </select>
                 <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
-                  <FileText className="w-4 h-4" />
+                  <ChevronDown className="w-3.5 h-3.5" />
                 </div>
               </div>
             </div>
 
-            {/* Visual Icon */}
-            <div className="hidden md:flex items-center justify-center mt-6 p-3 rounded-xl bg-gray-800 border border-darkBorder text-gray-400">
-              <GitCompare className="w-5 h-5 animate-pulse" />
-            </div>
-
-            {/* Dropdown 2 */}
-            <div className="flex-1 space-y-2">
-              <label className="text-xs font-semibold text-gray-400 tracking-wide uppercase">Document B</label>
-              <div className="relative">
-                <select
-                  value={doc2}
-                  onChange={(e) => setDoc2(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl bg-darkBg border border-darkBorder focus:border-brandPrimary/85 text-white text-sm focus:outline-none focus:ring-0 appearance-none cursor-pointer pr-10"
-                >
-                  {documents.map((doc, idx) => {
-                    const isUrl = doc.source_type === "url" || doc.type === "url";
-                    return (
-                      <option key={idx} value={doc.filename} disabled={doc.filename === doc1}>
-                        {isUrl ? `🌐 ${doc.title || doc.filename}` : `📄 ${doc.filename}`}
-                      </option>
-                    );
-                  })}
-                </select>
-                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
-                  <FileText className="w-4 h-4" />
+            {/* Document Selectors Row */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+              
+              {/* Dropdown 1 */}
+              <div className="flex-1 space-y-2">
+                <label className="text-xs font-semibold text-gray-400 tracking-wide uppercase">Document A</label>
+                <div className="relative">
+                  <select
+                    value={doc1}
+                    onChange={(e) => setDoc1(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl bg-darkBg border border-darkBorder focus:border-brandPrimary/85 text-white text-sm focus:outline-none focus:ring-0 appearance-none cursor-pointer pr-10"
+                  >
+                    {documents.map((doc, idx) => {
+                      const isUrl = doc.source_type === "url" || doc.type === "url";
+                      return (
+                        <option key={idx} value={doc.filename} disabled={doc.filename === doc2}>
+                          {isUrl ? `🌐 ${doc.title || doc.filename}` : `📄 ${doc.filename}`}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+                    <FileText className="w-4 h-4" />
+                  </div>
                 </div>
               </div>
-            </div>
 
-            {/* Compare Trigger Button */}
-            <button
-              onClick={handleCompare}
-              disabled={loading}
-              className="mt-6 md:mt-6 px-6 py-3.5 rounded-xl bg-brandPrimary hover:bg-indigo-600 disabled:bg-gray-850 text-white disabled:text-gray-500 font-semibold text-sm transition-all duration-200 flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/10 hover:shadow-indigo-600/25 shrink-0"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="w-4 h-4 text-white animate-spin" />
-                  Analyzing Files...
-                </>
-              ) : (
-                <>
-                  <GitCompare className="w-4 h-4 text-white" />
-                  Generate Matrix
-                </>
-              )}
-            </button>
+              {/* Visual Icon */}
+              <div className="hidden md:flex items-center justify-center mt-6 p-3 rounded-xl bg-gray-800 border border-darkBorder text-gray-400">
+                <GitCompare className="w-5 h-5 animate-pulse" />
+              </div>
+
+              {/* Dropdown 2 */}
+              <div className="flex-1 space-y-2">
+                <label className="text-xs font-semibold text-gray-400 tracking-wide uppercase">Document B</label>
+                <div className="relative">
+                  <select
+                    value={doc2}
+                    onChange={(e) => setDoc2(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl bg-darkBg border border-darkBorder focus:border-brandPrimary/85 text-white text-sm focus:outline-none focus:ring-0 appearance-none cursor-pointer pr-10"
+                  >
+                    {documents.map((doc, idx) => {
+                      const isUrl = doc.source_type === "url" || doc.type === "url";
+                      return (
+                        <option key={idx} value={doc.filename} disabled={doc.filename === doc1}>
+                          {isUrl ? `🌐 ${doc.title || doc.filename}` : `📄 ${doc.filename}`}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+                    <FileText className="w-4 h-4" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Compare Trigger Button */}
+              <button
+                onClick={handleCompare}
+                disabled={loading}
+                className="mt-6 md:mt-6 px-6 py-3.5 rounded-xl bg-brandPrimary hover:bg-indigo-600 disabled:bg-gray-850 text-white disabled:text-gray-500 font-semibold text-sm transition-all duration-200 flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/10 hover:shadow-indigo-600/25 shrink-0"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 text-white animate-spin" />
+                    Analyzing Files...
+                  </>
+                ) : (
+                  <>
+                    <GitCompare className="w-4 h-4 text-white" />
+                    Generate Matrix
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         )}
 
@@ -239,15 +313,15 @@ export default function CompareDocuments() {
             </div>
             
             <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider border ${
-              comparison.mode === "mistral_cloud"
-                ? "bg-purple-500/10 border-purple-500/20 text-purple-400"
+              comparison.mode === "nvidia_cloud"
+                ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400 shadow-sm shadow-emerald-500/5"
                 : comparison.mode === "ollama_local"
                 ? "bg-blue-500/10 border-blue-500/20 text-blue-400"
                 : "bg-amber-500/10 border-amber-500/20 text-amber-400"
             }`}>
-              {comparison.mode === "mistral_cloud" && "Online Synthesizer"}
+              {comparison.mode === "nvidia_cloud" && (comparison.model === "moonshotai/kimi-k2.6" ? "NVIDIA Cloud (Kimi K2.6)" : "NVIDIA Cloud (Llama-3.3)")}
               {comparison.mode === "ollama_local" && "Ollama Local"}
-              {comparison.mode === "offline_fallback" && "Offline Synthesizer"}
+              {comparison.mode === "offline_fallback" && "Offline Fallback"}
             </span>
           </div>
 
@@ -273,8 +347,9 @@ export default function CompareDocuments() {
               </thead>
               <tbody className="divide-y divide-darkBorder">
                 {matrixSections.map((sec, idx) => {
-                  const doc1_val = comparison[sec.key]?.doc1 || "Not specified.";
-                  const doc2_val = comparison[sec.key]?.doc2 || "Not specified.";
+                  const sectionObj = comparison[sec.key];
+                  const doc1_val = getCellValue(sectionObj, 1);
+                  const doc2_val = getCellValue(sectionObj, 2);
                   return (
                     <tr key={idx} className="hover:bg-gray-800/10 transition-colors text-sm align-top">
                       

@@ -27,7 +27,7 @@ export default function UploadDocuments() {
   // Fetch all active papers and URLs from API on mount
   const fetchDocuments = async () => {
     try {
-      const res = await fetch("http://localhost:8000/documents");
+      const res = await fetch("http://127.0.0.1:8000/documents");
       if (res.ok) {
         const data = await res.json();
         setFiles(data);
@@ -94,7 +94,7 @@ export default function UploadDocuments() {
       formData.append("file", file);
 
       try {
-        const res = await fetch("http://localhost:8000/upload", {
+        const res = await fetch("http://127.0.0.1:8000/upload", {
           method: "POST",
           body: formData,
         });
@@ -116,7 +116,7 @@ export default function UploadDocuments() {
       } catch (err) {
         setStatusMessage({
           type: "error",
-          text: `Failed to connect to the backend server. Make sure FastAPI is running on localhost:8000.`
+          text: `Failed to connect to the backend server. Make sure FastAPI is running on 127.0.0.1:8000.`
         });
       }
     }
@@ -133,7 +133,7 @@ export default function UploadDocuments() {
     setStatusMessage(null);
 
     try {
-      const res = await fetch("http://localhost:8000/url", {
+      const res = await fetch("http://127.0.0.1:8000/url", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url })
@@ -171,7 +171,7 @@ export default function UploadDocuments() {
     }
 
     try {
-      const res = await fetch(`http://localhost:8000/documents/${encodeURIComponent(filename)}`, {
+      const res = await fetch(`http://127.0.0.1:8000/documents/${encodeURIComponent(filename)}`, {
         method: "DELETE"
       });
 

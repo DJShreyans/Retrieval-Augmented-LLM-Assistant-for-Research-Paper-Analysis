@@ -27,7 +27,7 @@ export default function Dashboard() {
   useEffect(() => {
     async function fetchDashboardData() {
       try {
-        const res = await fetch("http://localhost:8000/documents");
+        const res = await fetch("http://127.0.0.1:8000/documents");
         if (res.ok) {
           const docs = await res.json();
           setRecentDocs(docs.slice(0, 3)); // Display top 3 recent papers

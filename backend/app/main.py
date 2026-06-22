@@ -3,6 +3,7 @@ import json
 import shutil
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
@@ -23,7 +24,15 @@ from app.rag import (
     ingest_url,
     collection
 )
-from app.llm import generate_rag_answer, generate_document_comparison, generate_mind_map
+from app.llm import (
+    generate_rag_answer, 
+    generate_document_comparison, 
+    generate_mind_map, 
+    generate_rag_answer_stream,
+    SUPPORTED_MODELS,
+    get_nvidia_api_key,
+    check_ollama_status
+)
 
 METADATA_FILE = os.path.join(os.path.dirname(UPLOADS_PATH), "documents_metadata.json")
 
@@ -109,6 +118,17 @@ app = FastAPI(
     version="1.0.0"
 )
 
+@app.on_event("startup")
+def startup_event():
+    # Warm up / preload the reranker model on startup so the first request doesn't experience latency
+    try:
+        print("Preloading semantic reranker model...")
+        from app.rag import get_reranker
+        get_reranker()
+        print("Semantic reranker model loaded successfully!")
+    except Exception as e:
+        print(f"Error during reranker model preloading: {e}")
+
 # Enable CORS for Next.js frontend
 app.add_middleware(
     CORSMiddleware,
@@ -122,10 +142,13 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     query: str
     document_ids: Optional[List[str]] = None  # Optional list of filenames to filter by
+    rerank: Optional[bool] = True
+    model: Optional[str] = None
 
 class CompareRequest(BaseModel):
     doc1_id: str
     doc2_id: str
+    model: Optional[str] = None
 
 class UrlRequest(BaseModel):
     url: str
@@ -133,6 +156,40 @@ class UrlRequest(BaseModel):
 @app.get("/")
 def read_root():
     return {"message": "ResearchMate API is running successfully!", "status": "online"}
+
+@app.get("/models")
+def get_available_models():
+    """
+    Returns all supported models indicating which ones are available 
+    based on API keys and local Ollama status.
+    """
+    nvidia_active = bool(get_nvidia_api_key())
+    ollama_active = check_ollama_status()
+    
+    models_list = []
+    for model_id, cfg in SUPPORTED_MODELS.items():
+        available = False
+        if cfg["provider"] == "nvidia":
+            available = nvidia_active
+        elif cfg["provider"] == "ollama":
+            available = ollama_active
+            
+        friendly_name = model_id
+        if model_id == "moonshotai/kimi-k2.6":
+            friendly_name = "Kimi K2.6 (NVIDIA Cloud)"
+        elif model_id == "meta/llama-3.3-70b-instruct":
+            friendly_name = "Llama 3.3 70B (NVIDIA Cloud)"
+        elif model_id == "ollama_local":
+            friendly_name = "Ollama Local (Mistral)"
+            
+        models_list.append({
+            "id": model_id,
+            "name": friendly_name,
+            "provider": cfg["provider"],
+            "available": available
+        })
+        
+    return {"models": models_list}
 
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
@@ -275,7 +332,7 @@ def delete_document(filename: str):
 @app.post("/chat")
 def chat_with_documents(request: ChatRequest):
     """
-    RAG Endpoint: Retrieves relevant context blocks and synthesizes an answer using Mistral AI.
+    RAG Endpoint: Retrieves relevant context blocks and streams the synthesized answer.
     """
     query = request.query.strip()
     if not query:
@@ -283,15 +340,24 @@ def chat_with_documents(request: ChatRequest):
         
     # Retrieve relevant document segments from ChromaDB
     try:
-        chunks = query_vector_store(query, file_filter=request.document_ids, top_k=4)
-        # Generate the response
-        response = generate_rag_answer(query, chunks)
-        return {
-            "answer": response["answer"],
-            "citations": response["citations"],
-            "mode": response["mode"],
-            "retrieved_context": chunks
+        chunks = query_vector_store(query, file_filter=request.document_ids, top_k=4, rerank=request.rerank)
+        
+        def event_generator():
+            try:
+                for chunk in generate_rag_answer_stream(query, chunks, model=request.model):
+                    if chunk["type"] == "metadata":
+                        chunk["retrieved_context"] = chunks
+                    yield f"data: {json.dumps(chunk)}\n\n"
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+                
+        headers = {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
         }
+        return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"RAG search execution failed: {str(e)}")
 
@@ -306,13 +372,14 @@ def compare_documents(request: CompareRequest):
         text2 = get_document_full_text(request.doc2_id)
         
         # Compare text using LLM or fallback heuristics
-        comparison = generate_document_comparison(request.doc1_id, text1, request.doc2_id, text2)
+        comparison = generate_document_comparison(request.doc1_id, text1, request.doc2_id, text2, model=request.model)
         return comparison
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Document comparison failed: {str(e)}")
 
 class MindMapRequest(BaseModel):
     doc_id: str
+    model: Optional[str] = None
 
 @app.post("/mindmap")
 def generate_doc_mind_map(request: MindMapRequest):
@@ -324,7 +391,7 @@ def generate_doc_mind_map(request: MindMapRequest):
         text = get_document_full_text(request.doc_id)
         
         # Generate mind map JSON structure
-        mindmap = generate_mind_map(request.doc_id, text)
+        mindmap = generate_mind_map(request.doc_id, text, model=request.model)
         return mindmap
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Mind map generation failed: {str(e)}")

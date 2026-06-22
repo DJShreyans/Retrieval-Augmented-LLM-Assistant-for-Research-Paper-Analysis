@@ -13,9 +13,9 @@ Retrieval-Augmented LLM Assistant for Research Paper Analysis combines semantic 
 3. **AI Chat Workspace**: A ChatGPT-style workspace. Chat with all documents or toggle checkboxes to focus queries on specific papers/urls. Every answer links back to exact retrieved context snippets via dynamic citations.
 4. **Multi-Document Comparison Matrix**: Compare documents side-by-side. The RAG pipeline automatically generates an objectives, methodology, datasets, and conclusions comparison grid.
 5. **Interactive Mind Map Generator**: Visualizes a hierarchical concept map of a document or website's key themes, structures, and relationships using AI.
-6. **Tri-Tier LLM Intelligence Layer**:
-   - **Mistral Cloud**: Connects to Mistral's API with full grounding prompts.
-   - **Ollama Local**: Seamlessly routes through your local Ollama Mistral model offline.
+6. **Tri-Tier LLM Intelligence Layer (Highly Optimized)**:
+   - **NVIDIA Cloud (Kimi K2.6 / Llama 3.3)**: Connects to NVIDIA NIM endpoints with full grounding prompts. Highly optimized with HTTP connection pooling (`requests.Session`) and zero-buffering Server-Sent Events (SSE).
+   - **Ollama Local**: Routes through your local Ollama Mistral model offline. Optimized with lazy health pings to prevent timeout delays when the service is offline.
    - **Offline Fallback Synthesizer**: Runs a smart heuristic text extraction engine in pure Python out-of-the-box, ensuring a fully functional demo without needing any external accounts, API keys, or active internet!
 
 ---
@@ -28,7 +28,7 @@ ResearchMate/
 │   ├── app/
 │   │   ├── main.py            # FastAPI entrypoint & endpoints (/upload, /documents, /chat, /compare, /mindmap)
 │   │   ├── rag.py             # PyMuPDF/docx/doc parsing, website scraping, local ChromaDB setup
-│   │   └── llm.py             # Mistral Cloud, Ollama Local, and Offline Fallback synthesizers
+│   │   └── llm.py             # NVIDIA Cloud (Kimi/Llama), Ollama Local, and Offline Fallback synthesizers
 │   ├── data/
 │   │   ├── chromadb/          # Persistent local database files
 │   │   └── uploads/           # Physical uploaded research documents
@@ -129,26 +129,30 @@ If you prefer starting the services manually, follow these instructions:
 
 ResearchMate automatically detects how to answer queries. You can choose any of these methods:
 
-### Option A: Mistral Cloud API (Highly Recommended)
-Set the `MISTRAL_API_KEY` environment variable before booting the backend:
+### Option A: NVIDIA Cloud API (Highly Recommended)
+Configure the `NVIDIA_API_KEY` environment variable in your `backend/.env` file:
+```env
+NVIDIA_API_KEY=nvapi-...
+```
+Alternatively, set it before booting the backend:
 - **Windows Command Prompt**:
   ```cmd
-  set MISTRAL_API_KEY=your_key_here
+  set NVIDIA_API_KEY=your_key_here
   run_backend.bat
   ```
 - **PowerShell**:
   ```powershell
-  $env:MISTRAL_API_KEY="your_key_here"
+  $env:NVIDIA_API_KEY="your_key_here"
   .\run_backend.bat
   ```
 
 ### Option B: Local Ollama (100% Offline)
 1. Download and install [Ollama](https://ollama.com/).
-2. Pull the Mistral model to your machine:
+2. Pull the local Mistral model configured in the application:
    ```bash
-   ollama pull mistral
+   ollama pull mistral-small-latest
    ```
-3. Keep Ollama running. ResearchMate will detect it and use it automatically!
+3. Keep Ollama running. ResearchMate will detect it and route queries automatically!
 
 ### Option C: Instant Heuristic Fallback (No Setup Required)
 If you have no API keys or local Ollama models installed, **do not worry!** ResearchMate's unique fallback synthesizer will automatically run, retrieving the exact chunks from ChromaDB and extracting matching facts in real-time, allowing you to show off a fully functional document RAG demo out-of-the-box.

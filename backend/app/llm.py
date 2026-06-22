@@ -3,24 +3,90 @@ from dotenv import load_dotenv
 load_dotenv()
 import json
 import requests
+import re
+
+# Create a global requests session to reuse TCP connections
+session = requests.Session()
+
+def extract_json_block(text: str) -> str:
+    """Extracts the first valid JSON block containing { } from the response text."""
+    try:
+        match = re.search(r'(\{.*\})', text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+    except Exception:
+        pass
+    return text.strip()
 
 # Default configuration
-MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions"
+NVIDIA_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 OLLAMA_API_URL = "http://localhost:11434/api/chat"
 
-def get_mistral_api_key() -> str:
-    """Retrieves the Mistral API Key from environment variables."""
-    return os.environ.get("MISTRAL_API_KEY", "").strip()
+def get_nvidia_api_key() -> str:
+    """Retrieves the NVIDIA API Key from environment variables."""
+    return os.environ.get("NVIDIA_API_KEY", "").strip()
 
 def check_ollama_status() -> bool:
     """Checks if Ollama is running locally on port 11434."""
     try:
-        response = requests.get("http://localhost:11434", timeout=1)
+        response = session.get("http://localhost:11434", timeout=1)
         return response.status_code == 200
     except requests.RequestException:
         return False
 
-def generate_rag_answer(question: str, retrieved_chunks: list[dict]) -> dict:
+# Supported models configuration
+SUPPORTED_MODELS = {
+    "moonshotai/kimi-k2.6": {
+        "provider": "nvidia",
+        "model": "moonshotai/kimi-k2.6",
+        "api_url": "https://integrate.api.nvidia.com/v1/chat/completions",
+        "temperature": 1.0,
+        "top_p": 1.0,
+        "max_tokens": 16384
+    },
+    "meta/llama-3.3-70b-instruct": {
+        "provider": "nvidia",
+        "model": "meta/llama-3.3-70b-instruct",
+        "api_url": "https://integrate.api.nvidia.com/v1/chat/completions",
+        "temperature": 0.1,
+        "top_p": 1.0,
+        "max_tokens": 4096
+    },
+    "ollama_local": {
+        "provider": "ollama",
+        "model": "mistral-small-latest",
+        "api_url": "http://localhost:11434/api/chat",
+        "temperature": 0.1,
+        "top_p": 1.0,
+        "max_tokens": 4096
+    }
+}
+
+def resolve_model(requested_model: str = None) -> tuple[str, dict]:
+    """
+    Resolves the model to use. If requested_model is provided and available, uses it.
+    Otherwise, automatically selects the best available cloud or local model.
+    Returns (model_id, config_dict).
+    """
+    nvidia_key = get_nvidia_api_key()
+    
+    # 1. If a specific model was requested, check if we can run it
+    if requested_model and requested_model in SUPPORTED_MODELS:
+        cfg = SUPPORTED_MODELS[requested_model]
+        if cfg["provider"] == "nvidia" and nvidia_key:
+            return requested_model, cfg
+        elif cfg["provider"] == "ollama" and check_ollama_status():
+            return requested_model, cfg
+            
+    # 2. Auto-select default model based on key availability
+    if nvidia_key:
+        return "moonshotai/kimi-k2.6", SUPPORTED_MODELS["moonshotai/kimi-k2.6"]
+    elif check_ollama_status():
+        return "ollama_local", SUPPORTED_MODELS["ollama_local"]
+        
+    return "offline_fallback", {}
+
+def generate_rag_answer(question: str, retrieved_chunks: list[dict], model: str = None) -> dict:
     """
     Generates a grounded answer based strictly on retrieved chunks.
     Automatically handles Mistral Cloud, Local Ollama, or Python Heuristic fallback.
@@ -61,63 +127,75 @@ def generate_rag_answer(question: str, retrieved_chunks: list[dict]) -> dict:
 
     user_prompt = f"Retrieved Context:\n{context_str}\nQuestion: {question}"
 
-    # Try Mistral Cloud API
-    api_key = get_mistral_api_key()
-    print("API KEY FOUND:", bool(api_key))
-    print("API KEY VALUE:", api_key[:10] if api_key else "NONE")
-    if api_key:
-        try:
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "model": "mistral-small-latest",
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                "temperature": 0.1
-            }
-            response = requests.post(MISTRAL_API_URL, headers=headers, json=payload, timeout=20)
-            if response.status_code == 200:
-                answer = response.json()["choices"][0]["message"]["content"]
-                return {
-                    "answer": answer,
-                    "citations": citations,
-                    "mode": "mistral_cloud"
-                }
-            else:
-                print(f"Mistral API returned error {response.status_code}: {response.text}")
-        except Exception as e:
-            print(f"Error calling Mistral Cloud API: {e}")
-
-    # Try Local Ollama (Mistral)
-    if check_ollama_status():
-        try:
-            payload = {
-                "model": "mistral-small-latest",
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                "options": {
-                    "temperature": 0.1
-                },
-                "stream": False
-            }
-            response = requests.post(OLLAMA_API_URL, json=payload, timeout=25)
+    model_id, cfg = resolve_model(model)
+    
+    if model_id == "offline_fallback":
+        return run_local_synthesizer(question, retrieved_chunks, citations)
+        
+    # Set up keys and headers
+    if cfg["provider"] == "nvidia":
+        api_key = get_nvidia_api_key()
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": cfg["model"],
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "max_tokens": cfg.get("max_tokens", 4096),
+            "temperature": cfg.get("temperature", 0.1),
+            "top_p": cfg.get("top_p", 1.0)
+        }
+        api_mode = "nvidia_cloud"
+        api_url = cfg["api_url"]
+    elif cfg["provider"] == "ollama":
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "model": cfg["model"],
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "options": {
+                "temperature": cfg.get("temperature", 0.1)
+            },
+            "stream": False
+        }
+        api_mode = "ollama_local"
+        api_url = cfg["api_url"]
+        
+    # Now call the resolved API
+    try:
+        if cfg["provider"] == "ollama":
+            response = session.post(api_url, json=payload, timeout=25)
             if response.status_code == 200:
                 answer = response.json()["message"]["content"]
                 return {
                     "answer": answer,
                     "citations": citations,
-                    "mode": "ollama_local"
+                    "mode": api_mode
                 }
-        except Exception as e:
-            print(f"Error calling local Ollama: {e}")
-
-    # Python Heuristic Synthesizer Fallback (Zero network dependencies)
+        else:
+            response = session.post(api_url, headers=headers, json=payload, timeout=60)
+            if response.status_code == 200:
+                answer = response.json()["choices"][0]["message"]["content"]
+                return {
+                    "answer": answer,
+                    "citations": citations,
+                    "mode": api_mode
+                }
+            else:
+                print(f"Cloud API returned error {response.status_code}: {response.text}")
+    except Exception as e:
+        print(f"Error calling model {model_id}: {e}")
+        
+    # Fallback
+    if check_ollama_status() and model_id != "ollama_local":
+        return generate_rag_answer(question, retrieved_chunks, model="ollama_local")
+        
     return run_local_synthesizer(question, retrieved_chunks, citations)
 
 
@@ -191,7 +269,138 @@ def run_local_synthesizer(question: str, retrieved_chunks: list[dict], citations
     }
 
 
-def generate_document_comparison(doc1_name: str, doc1_text: str, doc2_name: str, doc2_text: str) -> dict:
+def generate_rag_answer_stream(question: str, retrieved_chunks: list[dict], model: str = None):
+    """
+    Generates a grounded answer based strictly on retrieved chunks, yielding chunks progressively.
+    Automatically handles Mistral Cloud, Local Ollama, or Python Heuristic fallback.
+    """
+    if not retrieved_chunks:
+        yield {"type": "metadata", "citations": [], "mode": "no_context"}
+        yield {"type": "chunk", "content": "No relevant document chunks were found. Please upload documents first and ensure they are active."}
+        return
+
+    # Format the context and build a citation index map
+    context_str = ""
+    citations = []
+    seen_sources = {}
+    
+    for idx, chunk in enumerate(retrieved_chunks):
+        source = chunk["source"]
+        if source not in seen_sources:
+            seen_sources[source] = len(seen_sources) + 1
+            citations.append({
+                "index": seen_sources[source],
+                "filename": source
+            })
+            
+        citation_num = seen_sources[source]
+        context_str += f"[Ref {citation_num}] (From {source}): {chunk['content']}\n\n"
+
+    # Define system instructions to enforce strict grounding
+    system_prompt = (
+        "You are ResearchMate, a precise research assistant. "
+        "Answer the user's question based strictly on the retrieved document context below. "
+        "Do not use any external knowledge. If the context does not contain enough information "
+        "to answer, politely state that you cannot find the answer in the provided documents.\n\n"
+        "Cite the sources in your answer using bracketed numbers matching the reference numbers, e.g. [1], [2]. "
+        "Include citations directly in your sentences when mentioning facts retrieved from a specific document."
+    )
+
+    user_prompt = f"Retrieved Context:\n{context_str}\nQuestion: {question}"
+
+    model_id, cfg = resolve_model(model)
+    
+    if model_id == "offline_fallback":
+        res = run_local_synthesizer(question, retrieved_chunks, citations)
+        yield {"type": "metadata", "citations": citations, "mode": "offline_fallback", "model": "offline_fallback"}
+        yield {"type": "chunk", "content": res["answer"]}
+        return
+        
+    # Set up keys and headers
+    if cfg["provider"] == "nvidia":
+        api_key = get_nvidia_api_key()
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": cfg["model"],
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "max_tokens": cfg.get("max_tokens", 4096),
+            "temperature": cfg.get("temperature", 0.1),
+            "top_p": cfg.get("top_p", 1.0),
+            "stream": True
+        }
+        api_mode = "nvidia_cloud"
+        api_url = cfg["api_url"]
+    elif cfg["provider"] == "ollama":
+        payload = {
+            "model": cfg["model"],
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "options": {
+                "temperature": cfg.get("temperature", 0.1)
+            },
+            "stream": True
+        }
+        api_mode = "ollama_local"
+        api_url = cfg["api_url"]
+
+    yield {"type": "metadata", "citations": citations, "mode": api_mode, "model": model_id}
+
+    try:
+        if cfg["provider"] == "ollama":
+            response = session.post(api_url, json=payload, stream=True, timeout=25)
+            if response.status_code == 200:
+                for line in response.iter_lines():
+                    if line:
+                        try:
+                            chunk_data = json.loads(line.decode('utf-8'))
+                            content = chunk_data.get("message", {}).get("content", "")
+                            if content:
+                                yield {"type": "chunk", "content": content}
+                        except Exception as e:
+                            print(f"Error parsing Ollama stream: {e}")
+                return
+        else:
+            response = session.post(api_url, headers=headers, json=payload, stream=True, timeout=60)
+            if response.status_code == 200:
+                for line in response.iter_lines():
+                    if line:
+                        decoded_line = line.decode('utf-8').strip()
+                        if decoded_line.startswith("data: "):
+                            data_str = decoded_line[6:]
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                chunk_data = json.loads(data_str)
+                                delta = chunk_data.get("choices", [{}])[0].get("delta", {})
+                                if "content" in delta:
+                                    yield {"type": "chunk", "content": delta["content"]}
+                            except Exception as e:
+                                print(f"Error parsing Cloud SSE: {e}")
+                return
+            else:
+                print(f"Cloud API returned error {response.status_code}: {response.text}")
+    except Exception as e:
+        print(f"Error calling Cloud API: {e}")
+
+    # Fallback to Local Ollama
+    if check_ollama_status() and model_id != "ollama_local":
+        yield from generate_rag_answer_stream(question, retrieved_chunks, model="ollama_local")
+    else:
+        # Fallback to local synthesizer
+        res = run_local_synthesizer(question, retrieved_chunks, citations)
+        yield {"type": "chunk", "content": res["answer"]}
+
+
+
+def generate_document_comparison(doc1_name: str, doc1_text: str, doc2_name: str, doc2_text: str, model: str = None) -> dict:
     """
     Generates a structured comparative analysis table for two documents across:
     Objectives, Methodology, Datasets, and Conclusions.
@@ -219,63 +428,71 @@ def generate_document_comparison(doc1_name: str, doc1_text: str, doc2_name: str,
         f"Generate the comparison table JSON."
     )
 
-    api_key = get_mistral_api_key()
+    model_id, cfg = resolve_model(model)
     
-    # 1. Try Mistral Cloud
-    if api_key:
-        try:
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "model": "mistral-small-latest",
-                "response_format": {"type": "json_object"},
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                "temperature": 0.1
-            }
-            response = requests.post(MISTRAL_API_URL, headers=headers, json=payload, timeout=25)
-            if response.status_code == 200:
-                content = response.json()["choices"][0]["message"]["content"]
-                # Clean up any potential markdown wraps (e.g. ```json ... ```)
-                content = content.replace("```json", "").replace("```", "").strip()
-                result_json = json.loads(content)
-                result_json["mode"] = "mistral_cloud"
-                return result_json
-            else:
-                print(f"Mistral Comparison API returned error {response.status_code}: {response.text}")
-        except Exception as e:
-            print(f"Error comparing documents via Mistral Cloud: {e}")
+    if model_id == "offline_fallback":
+        return run_local_comparison_synthesizer(doc1_name, doc1_text, doc2_name, doc2_text)
 
-    # 2. Try Local Ollama
-    if check_ollama_status():
-        try:
-            payload = {
-                "model": "mistral-small-latest",
-                "messages": [
-                    {"role": "system", "content": system_prompt + " Reply ONLY in valid raw JSON. Do not include markdown codeblocks."},
-                    {"role": "user", "content": user_prompt}
-                ],
-                "options": {
-                    "temperature": 0.1
-                },
-                "stream": False
-            }
-            response = requests.post(OLLAMA_API_URL, json=payload, timeout=30)
-            if response.status_code == 200:
+    # Set up headers and payloads
+    if cfg["provider"] == "nvidia":
+        api_key = get_nvidia_api_key()
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": cfg["model"],
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "max_tokens": cfg.get("max_tokens", 4096),
+            "temperature": cfg.get("temperature", 0.1),
+            "top_p": cfg.get("top_p", 1.0)
+        }
+        api_mode = "nvidia_cloud"
+        api_url = cfg["api_url"]
+    elif cfg["provider"] == "ollama":
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "model": cfg["model"],
+            "messages": [
+                {"role": "system", "content": system_prompt + " Reply ONLY in valid raw JSON. Do not include markdown codeblocks."},
+                {"role": "user", "content": user_prompt}
+            ],
+            "options": {
+                "temperature": cfg.get("temperature", 0.1)
+            },
+            "stream": False
+        }
+        api_mode = "ollama_local"
+        api_url = cfg["api_url"]
+
+    try:
+        if cfg["provider"] == "ollama":
+            response = session.post(api_url, json=payload, timeout=30)
+        else:
+            response = session.post(api_url, headers=headers, json=payload, timeout=60)
+            
+        if response.status_code == 200:
+            if cfg["provider"] == "ollama":
                 content = response.json()["message"]["content"]
-                # Clean up any potential markdown wraps
-                content = content.replace("```json", "").replace("```", "").strip()
-                result_json = json.loads(content)
-                result_json["mode"] = "ollama_local"
-                return result_json
-        except Exception as e:
-            print(f"Error comparing documents via local Ollama: {e}")
+            else:
+                content = response.json()["choices"][0]["message"]["content"]
+            json_str = extract_json_block(content)
+            result_json = json.loads(json_str)
+            result_json["mode"] = api_mode
+            result_json["model"] = model_id
+            return result_json
+        else:
+            print(f"Cloud Comparison API returned error {response.status_code}: {response.text}")
+    except Exception as e:
+        print(f"Error comparing documents via Cloud API: {e}")
 
-    # 3. Fallback Heuristic Comparison
+    # Fallback to local Ollama or heuristics
+    if check_ollama_status() and model_id != "ollama_local":
+        return generate_document_comparison(doc1_name, doc1_text, doc2_name, doc2_text, model="ollama_local")
     return run_local_comparison_synthesizer(doc1_name, doc1_text, doc2_name, doc2_text)
 
 
@@ -314,7 +531,7 @@ def run_local_comparison_synthesizer(doc1_name: str, doc1_text: str, doc2_name: 
         "mode": "offline_fallback"
     }
 
-def generate_mind_map(doc_name: str, doc_text: str) -> dict:
+def generate_mind_map(doc_name: str, doc_text: str, model: str = None) -> dict:
     """
     Generates a hierarchical mind map structure for a document across main concepts.
     Returns a JSON tree structure.
@@ -348,61 +565,71 @@ def generate_mind_map(doc_name: str, doc_text: str) -> dict:
     doc_excerpt = " ".join(doc_text.split()[:2500])
     user_prompt = f"Document ({doc_name}):\n{doc_excerpt}\n\nGenerate the conceptual mind map JSON."
 
-    api_key = get_mistral_api_key()
+    model_id, cfg = resolve_model(model)
+    
+    if model_id == "offline_fallback":
+        return run_local_mind_map_synthesizer(doc_name, doc_text)
 
-    # 1. Try Mistral Cloud
-    if api_key:
-        try:
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "model": "mistral-small-latest",
-                "response_format": {"type": "json_object"},
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                "temperature": 0.2
-            }
-            response = requests.post(MISTRAL_API_URL, headers=headers, json=payload, timeout=25)
-            if response.status_code == 200:
-                content = response.json()["choices"][0]["message"]["content"]
-                content = content.replace("```json", "").replace("```", "").strip()
-                result_json = json.loads(content)
-                result_json["mode"] = "mistral_cloud"
-                return result_json
-            else:
-                print(f"Mistral Mindmap API returned error {response.status_code}: {response.text}")
-        except Exception as e:
-            print(f"Error generating mindmap via Mistral Cloud: {e}")
+    # Set up headers and payloads
+    if cfg["provider"] == "nvidia":
+        api_key = get_nvidia_api_key()
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": cfg["model"],
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "max_tokens": cfg.get("max_tokens", 4096),
+            "temperature": cfg.get("temperature", 0.2),
+            "top_p": cfg.get("top_p", 1.0)
+        }
+        api_mode = "nvidia_cloud"
+        api_url = cfg["api_url"]
+    elif cfg["provider"] == "ollama":
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "model": cfg["model"],
+            "messages": [
+                {"role": "system", "content": system_prompt + " Reply ONLY in valid raw JSON. Do not include markdown codeblocks."},
+                {"role": "user", "content": user_prompt}
+            ],
+            "options": {
+                "temperature": cfg.get("temperature", 0.2)
+            },
+            "stream": False
+        }
+        api_mode = "ollama_local"
+        api_url = cfg["api_url"]
 
-    # 2. Try Local Ollama
-    if check_ollama_status():
-        try:
-            payload = {
-                "model": "mistral-small-latest",
-                "messages": [
-                    {"role": "system", "content": system_prompt + " Reply ONLY in valid raw JSON. Do not include markdown codeblocks."},
-                    {"role": "user", "content": user_prompt}
-                ],
-                "options": {
-                    "temperature": 0.2
-                },
-                "stream": False
-            }
-            response = requests.post(OLLAMA_API_URL, json=payload, timeout=30)
-            if response.status_code == 200:
+    try:
+        if cfg["provider"] == "ollama":
+            response = session.post(api_url, json=payload, timeout=30)
+        else:
+            response = session.post(api_url, headers=headers, json=payload, timeout=60)
+            
+        if response.status_code == 200:
+            if cfg["provider"] == "ollama":
                 content = response.json()["message"]["content"]
-                content = content.replace("```json", "").replace("```", "").strip()
-                result_json = json.loads(content)
-                result_json["mode"] = "ollama_local"
-                return result_json
-        except Exception as e:
-            print(f"Error generating mindmap via Ollama: {e}")
+            else:
+                content = response.json()["choices"][0]["message"]["content"]
+            json_str = extract_json_block(content)
+            result_json = json.loads(json_str)
+            result_json["mode"] = api_mode
+            result_json["model"] = model_id
+            return result_json
+        else:
+            print(f"Cloud Mindmap API returned error {response.status_code}: {response.text}")
+    except Exception as e:
+        print(f"Error generating mindmap: {e}")
 
-    # 3. Heuristic Fallback
+    # Fallback to local Ollama or heuristics
+    if check_ollama_status() and model_id != "ollama_local":
+        return generate_mind_map(doc_name, doc_text, model="ollama_local")
     return run_local_mind_map_synthesizer(doc_name, doc_text)
 
 
