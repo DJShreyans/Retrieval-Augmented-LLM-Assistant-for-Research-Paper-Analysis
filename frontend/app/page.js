@@ -12,6 +12,7 @@ import {
   Database,
   Cpu
 } from "lucide-react";
+import { API_BASE_URL } from "../config";
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
@@ -27,7 +28,7 @@ export default function Dashboard() {
   useEffect(() => {
     async function fetchDashboardData() {
       try {
-        const res = await fetch("http://127.0.0.1:8000/documents");
+        const res = await fetch(`${API_BASE_URL}/documents`);
         if (res.ok) {
           const docs = await res.json();
           setRecentDocs(docs.slice(0, 3)); // Display top 3 recent papers

@@ -13,6 +13,7 @@ import {
   Dot,
   GitFork
 } from "lucide-react";
+import { API_BASE_URL } from "../config";
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -23,7 +24,7 @@ export default function Sidebar() {
   useEffect(() => {
     async function checkApiHealth() {
       try {
-        const res = await fetch("http://127.0.0.1:8000/", { signal: AbortSignal.timeout(2000) });
+        const res = await fetch(`${API_BASE_URL}/`, { signal: AbortSignal.timeout(2000) });
         if (res.ok) {
           setApiOnline(true);
         } else {

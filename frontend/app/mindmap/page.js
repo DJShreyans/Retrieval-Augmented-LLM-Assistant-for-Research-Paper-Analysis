@@ -13,6 +13,7 @@ import {
   Cpu,
   ChevronDown
 } from "lucide-react";
+import { API_BASE_URL } from "../../config";
 
 export default function DocumentMindMap() {
   const [documents, setDocuments] = useState([]);
@@ -27,7 +28,7 @@ export default function DocumentMindMap() {
   useEffect(() => {
     async function loadDocs() {
       try {
-        const res = await fetch("http://127.0.0.1:8000/documents");
+        const res = await fetch(`${API_BASE_URL}/documents`);
         if (res.ok) {
           const data = await res.json();
           setDocuments(data);
@@ -44,7 +45,7 @@ export default function DocumentMindMap() {
     
     async function loadModels() {
       try {
-        const res = await fetch("http://127.0.0.1:8000/models");
+        const res = await fetch(`${API_BASE_URL}/models`);
         if (res.ok) {
           const data = await res.json();
           setModels(data.models);
@@ -76,7 +77,7 @@ export default function DocumentMindMap() {
     setMindmapData(null);
 
     try {
-      const res = await fetch("http://127.0.0.1:8000/mindmap", {
+      const res = await fetch(`${API_BASE_URL}/mindmap`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

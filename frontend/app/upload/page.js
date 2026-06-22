@@ -12,6 +12,7 @@ import {
   Globe,
   Link2
 } from "lucide-react";
+import { API_BASE_URL } from "../../config";
 
 export default function UploadDocuments() {
   const [dragActive, setDragActive] = useState(false);
@@ -27,7 +28,7 @@ export default function UploadDocuments() {
   // Fetch all active papers and URLs from API on mount
   const fetchDocuments = async () => {
     try {
-      const res = await fetch("http://127.0.0.1:8000/documents");
+      const res = await fetch(`${API_BASE_URL}/documents`);
       if (res.ok) {
         const data = await res.json();
         setFiles(data);
@@ -94,7 +95,7 @@ export default function UploadDocuments() {
       formData.append("file", file);
 
       try {
-        const res = await fetch("http://127.0.0.1:8000/upload", {
+        const res = await fetch(`${API_BASE_URL}/upload`, {
           method: "POST",
           body: formData,
         });
@@ -116,7 +117,7 @@ export default function UploadDocuments() {
       } catch (err) {
         setStatusMessage({
           type: "error",
-          text: `Failed to connect to the backend server. Make sure FastAPI is running on 127.0.0.1:8000.`
+          text: `Failed to connect to the backend server. Make sure FastAPI is running on ${API_BASE_URL}.`
         });
       }
     }
@@ -133,7 +134,7 @@ export default function UploadDocuments() {
     setStatusMessage(null);
 
     try {
-      const res = await fetch("http://127.0.0.1:8000/url", {
+      const res = await fetch(`${API_BASE_URL}/url`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url })
@@ -171,7 +172,7 @@ export default function UploadDocuments() {
     }
 
     try {
-      const res = await fetch(`http://127.0.0.1:8000/documents/${encodeURIComponent(filename)}`, {
+      const res = await fetch(`${API_BASE_URL}/documents/${encodeURIComponent(filename)}`, {
         method: "DELETE"
       });
 

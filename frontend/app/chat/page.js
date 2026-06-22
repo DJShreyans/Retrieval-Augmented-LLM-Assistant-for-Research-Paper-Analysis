@@ -18,6 +18,7 @@ import {
   Check,
   Cpu
 } from "lucide-react";
+import { API_BASE_URL } from "../../config";
 // Helper to parse inline markdown tags: **bold**, *italic*, `code`, and [1]/[Ref 1] citation badges
 function parseInlineStyles(text, onCitationClick) {
   if (!text) return "";
@@ -220,7 +221,7 @@ export default function ChatWithDocuments() {
   useEffect(() => {
     async function loadDocs() {
       try {
-        const res = await fetch("http://127.0.0.1:8000/documents");
+        const res = await fetch(`${API_BASE_URL}/documents`);
         if (res.ok) {
           const data = await res.json();
           setDocuments(data);
@@ -232,7 +233,7 @@ export default function ChatWithDocuments() {
     
     async function loadModels() {
       try {
-        const res = await fetch("http://127.0.0.1:8000/models");
+        const res = await fetch(`${API_BASE_URL}/models`);
         if (res.ok) {
           const data = await res.json();
           setModels(data.models);
@@ -278,7 +279,7 @@ export default function ChatWithDocuments() {
     setError(null);
     
     try {
-      const res = await fetch("http://127.0.0.1:8000/chat", {
+      const res = await fetch(`${API_BASE_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
