@@ -118,16 +118,8 @@ app = FastAPI(
     version="1.0.0"
 )
 
-@app.on_event("startup")
-def startup_event():
-    # Warm up / preload the reranker model on startup so the first request doesn't experience latency
-    try:
-        print("Preloading semantic reranker model...")
-        from app.rag import get_reranker
-        get_reranker()
-        print("Semantic reranker model loaded successfully!")
-    except Exception as e:
-        print(f"Error during reranker model preloading: {e}")
+# Backend services do not need model preloading since we utilize cloud-hosted embeddings and ranking
+
 
 # Enable CORS for Next.js frontend
 app.add_middleware(

@@ -17,16 +17,58 @@ UPLOADS_PATH = os.path.join(BASE_DIR, "data", "uploads")
 os.makedirs(DB_PATH, exist_ok=True)
 os.makedirs(UPLOADS_PATH, exist_ok=True)
 
-# Initialize ChromaDB client and local embedding model
-# SentenceTransformerEmbeddingFunction automatically caches all-MiniLM-L6-v2 locally
+import math
+
+# Custom embedding function targeting NVIDIA cloud embeddings
+# Truncates to 384 dimensions and normalizes to maintain compatibility with ChromaDB collections
+class NvidiaEmbeddingFunction(chromadb.EmbeddingFunction):
+    def __call__(self, input: chromadb.Documents) -> chromadb.Embeddings:
+        nvidia_key = os.environ.get("NVIDIA_API_KEY", "").strip()
+        if not nvidia_key:
+            # Local offline mock fallback
+            return [[0.0] * 384 for _ in input]
+            
+        try:
+            headers = {
+                "Authorization": f"Bearer {nvidia_key}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "input": input,
+                "model": "nvidia/llama-nemotron-embed-1b-v2",
+                "encoding_format": "float"
+            }
+            response = requests.post(
+                "https://integrate.api.nvidia.com/v1/embeddings",
+                headers=headers,
+                json=payload,
+                timeout=15
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            embeddings = []
+            for item in data["data"]:
+                vec = item["embedding"][:384]
+                # Re-normalize the truncated vector
+                v_sum = sum(x*x for x in vec)
+                norm = math.sqrt(v_sum)
+                if norm > 0:
+                    vec = [x / norm for x in vec]
+                embeddings.append(vec)
+            return embeddings
+        except Exception as e:
+            print(f"[NvidiaEmbedding] Failed to generate cloud embeddings: {e}")
+            return [[0.0] * 384 for _ in input]
+
+# Initialize ChromaDB client and embedding model
 client = chromadb.PersistentClient(path=DB_PATH)
-embedding_func = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name="all-MiniLM-L6-v2"
-)
+embedding_func = NvidiaEmbeddingFunction()
 collection = client.get_or_create_collection(
     name="researchmate_docs", 
     embedding_function=embedding_func
 )
+
 
 def extract_text_from_pdf(file_path: str) -> str:
     """Extracts text content from a PDF document using PyMuPDF (fitz)."""
@@ -211,22 +253,12 @@ def ingest_document(file_name: str, file_path: str) -> dict:
         "total_characters": len(text)
     }
 
-# Lazily initialized cross-encoder for semantic re-ranking
-_reranker_model = None
-
-def get_reranker():
-    global _reranker_model
-    if _reranker_model is None:
-        from sentence_transformers import CrossEncoder
-        # Use CPU by default, it is fast enough for small candidate sizes
-        _reranker_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-    return _reranker_model
-
+# Reranking is performed via NVIDIA cloud reranking API to avoid loading local models
 def query_vector_store(query_text: str, file_filter: list[str] = None, top_k: int = 4, rerank: bool = True) -> list[dict]:
     """
     Queries ChromaDB for the most relevant document chunks matching a query.
     Can filter results to specific uploaded document names.
-    If rerank is True, retrieves candidates and re-ranks them using MS-MARCO Cross-Encoder.
+    If rerank is True, retrieves candidates and re-ranks them using NVIDIA cloud reranking.
     """
     where_clause = {}
     if file_filter:
@@ -260,25 +292,57 @@ def query_vector_store(query_text: str, file_filter: list[str] = None, top_k: in
                 "score": 1 - distances[i]  # Convert distance to similarity score
             })
             
-    # Re-rank candidate results using Cross-Encoder
+    # Re-rank candidate results using Cloud-hosted NVIDIA Reranker
     if rerank and len(formatted_results) > 1:
-        try:
-            model = get_reranker()
-            pairs = [(query_text, item["content"]) for item in formatted_results]
-            scores = model.predict(pairs)
-            
-            for idx, score in enumerate(scores):
-                formatted_results[idx]["rerank_score"] = float(score)
-                # Normalize cross-encoder output (logit score) slightly for display similarity
-                # Simple sigmoid-like mapping or clamping
-                formatted_results[idx]["score"] = float(score)
+        nvidia_key = os.environ.get("NVIDIA_API_KEY", "").strip()
+        if nvidia_key:
+            try:
+                headers = {
+                    "Authorization": f"Bearer {nvidia_key}",
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "model": "nvidia/rerank-qa-mistral-4b",
+                    "query": {
+                        "text": query_text
+                    },
+                    "passages": [
+                        {"text": item["content"]} for item in formatted_results
+                    ]
+                }
+                response = requests.post(
+                    "https://ai.api.nvidia.com/v1/retrieval/nvidia/reranking",
+                    headers=headers,
+                    json=payload,
+                    timeout=12
+                )
+                # Fallback to model version suffix if needed
+                if response.status_code != 200:
+                    payload["model"] = "nv-rerank-qa-mistral-4b:1"
+                    response = requests.post(
+                        "https://ai.api.nvidia.com/v1/retrieval/nvidia/reranking",
+                        headers=headers,
+                        json=payload,
+                        timeout=12
+                    )
                 
-            # Sort by re-ranked scores (descending)
-            formatted_results.sort(key=lambda x: x["rerank_score"], reverse=True)
-        except Exception as e:
-            print(f"[Reranker] Failed to run cross-encoder re-ranking: {e}")
+                if response.status_code == 200:
+                    res_data = response.json()
+                    for rank_item in res_data.get("data", []):
+                        idx = rank_item["index"]
+                        score = rank_item.get("logit", rank_item.get("score", 0.0))
+                        formatted_results[idx]["rerank_score"] = float(score)
+                        formatted_results[idx]["score"] = float(score)
+                    
+                    # Sort by re-ranked scores (descending)
+                    formatted_results.sort(key=lambda x: x.get("rerank_score", 0.0), reverse=True)
+                else:
+                    print(f"[Reranker] Cloud API error: {response.text}")
+            except Exception as e:
+                print(f"[Reranker] Failed to run cloud-hosted re-ranking: {e}")
             
     return formatted_results[:top_k]
+
 
 def delete_document_from_vector_store(file_name: str):
     """Deletes all vectorized chunks associated with a document from ChromaDB."""
