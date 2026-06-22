@@ -17,57 +17,16 @@ UPLOADS_PATH = os.path.join(BASE_DIR, "data", "uploads")
 os.makedirs(DB_PATH, exist_ok=True)
 os.makedirs(UPLOADS_PATH, exist_ok=True)
 
-import math
+from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 
-# Custom embedding function targeting NVIDIA cloud embeddings
-# Truncates to 384 dimensions and normalizes to maintain compatibility with ChromaDB collections
-class NvidiaEmbeddingFunction(chromadb.EmbeddingFunction):
-    def __call__(self, input: chromadb.Documents) -> chromadb.Embeddings:
-        nvidia_key = os.environ.get("NVIDIA_API_KEY", "").strip()
-        if not nvidia_key:
-            # Local offline mock fallback
-            return [[0.0] * 384 for _ in input]
-            
-        try:
-            headers = {
-                "Authorization": f"Bearer {nvidia_key}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "input": input,
-                "model": "nvidia/llama-nemotron-embed-1b-v2",
-                "encoding_format": "float"
-            }
-            response = requests.post(
-                "https://integrate.api.nvidia.com/v1/embeddings",
-                headers=headers,
-                json=payload,
-                timeout=15
-            )
-            response.raise_for_status()
-            data = response.json()
-            
-            embeddings = []
-            for item in data["data"]:
-                vec = item["embedding"][:384]
-                # Re-normalize the truncated vector
-                v_sum = sum(x*x for x in vec)
-                norm = math.sqrt(v_sum)
-                if norm > 0:
-                    vec = [x / norm for x in vec]
-                embeddings.append(vec)
-            return embeddings
-        except Exception as e:
-            print(f"[NvidiaEmbedding] Failed to generate cloud embeddings: {e}")
-            return [[0.0] * 384 for _ in input]
-
-# Initialize ChromaDB client and embedding model
+# Initialize ChromaDB client and embedding model (ONNX-based all-MiniLM-L6-v2)
 client = chromadb.PersistentClient(path=DB_PATH)
-embedding_func = NvidiaEmbeddingFunction()
+embedding_func = DefaultEmbeddingFunction()
 collection = client.get_or_create_collection(
     name="researchmate_docs", 
     embedding_function=embedding_func
 )
+
 
 
 def extract_text_from_pdf(file_path: str) -> str:
