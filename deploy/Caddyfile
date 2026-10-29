@@ -1,0 +1,53 @@
+# Caddy configuration for ResearchMate
+# Replace your-domain.com with your actual registered domain
+
+your-domain.com {
+    # Automatic HTTPS is enabled by default via Let's Encrypt / ZeroSSL
+
+    # Production Security Headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        -Server
+    }
+
+    # Route /api/* requests to FastAPI backend (stripping /api prefix)
+    # Example: /api/papers -> http://127.0.0.1:8000/papers
+    handle_path /api/* {
+        reverse_proxy 127.0.0.1:8000 {
+            header_up X-Forwarded-Proto https
+            header_up X-Forwarded-Host {host}
+            header_up Host {host}
+        }
+    }
+
+    # Route /thumbnails/* directly or to FastAPI
+    handle_path /thumbnails/* {
+        reverse_proxy 127.0.0.1:8000 {
+            header_up X-Forwarded-Proto https
+            header_up Host {host}
+        }
+    }
+
+    # Route all other web traffic to Next.js production server
+    handle {
+        reverse_proxy 127.0.0.1:3000 {
+            header_up X-Forwarded-Proto https
+            header_up Host {host}
+        }
+    }
+
+    # High-performance compression
+    encode gzip zstd
+
+    # Access logs
+    log {
+        output file /var/log/caddy/researchmate.access.log {
+            roll_size 50mb
+            roll_keep 7
+        }
+    }
+}

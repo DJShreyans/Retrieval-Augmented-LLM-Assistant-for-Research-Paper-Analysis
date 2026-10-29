@@ -1,0 +1,29 @@
+[Unit]
+Description=ResearchMate FastAPI Backend Service
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=researchmate
+Group=researchmate
+WorkingDirectory=/opt/researchmate
+EnvironmentFile=/opt/researchmate/.env
+Environment="PATH=/opt/researchmate/venv/bin:/usr/local/bin:/usr/bin"
+Environment="PYTHONPATH=/opt/researchmate"
+
+# Start Uvicorn with 2 worker processes (optimized for 4GB-8GB VPS)
+ExecStart=/opt/researchmate/venv/bin/uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --workers 2 --timeout-keep-alive 65
+
+# Restart on failure with backoff
+Restart=always
+RestartSec=5s
+
+# Resource and security limits
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=researchmate-backend
+
+[Install]
+WantedBy=multi-user.target

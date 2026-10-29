@@ -1,0 +1,29 @@
+[Unit]
+Description=ResearchMate Next.js Frontend Service
+After=network.target researchmate-backend.service
+Wants=researchmate-backend.service
+
+[Service]
+Type=simple
+User=researchmate
+Group=researchmate
+WorkingDirectory=/opt/researchmate/frontend
+EnvironmentFile=/opt/researchmate/.env
+Environment="PATH=/usr/bin:/usr/local/bin:/opt/researchmate/frontend/node_modules/.bin"
+Environment="NODE_ENV=production"
+Environment="PORT=3000"
+Environment="HOSTNAME=127.0.0.1"
+
+# Run production Next.js server
+ExecStart=/usr/bin/npm run start -- -p 3000 -H 127.0.0.1
+
+Restart=always
+RestartSec=5s
+
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=researchmate-frontend
+
+[Install]
+WantedBy=multi-user.target
