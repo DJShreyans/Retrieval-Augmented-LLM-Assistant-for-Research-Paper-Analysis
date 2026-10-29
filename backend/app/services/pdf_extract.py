@@ -189,3 +189,21 @@ def generate_thumbnail(doc: fitz.Document, paper_id: int) -> Optional[str]:
     except Exception as e:
         print(f"[Thumbnail Error] paper_id={paper_id}: {e}")
         return None
+
+def extract_pdf_from_bytes(pdf_bytes: bytes, filename: str = "", thumbnail_path: Optional[Path] = None) -> Dict[str, Any]:
+    """Helper to parse PDF from bytes and optionally save thumbnail."""
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    data = extract_pdf_data(doc, filename=filename)
+    if thumbnail_path and len(doc) > 0:
+        page = doc[0]
+        pix = page.get_pixmap(dpi=100)
+        Path(thumbnail_path).parent.mkdir(parents=True, exist_ok=True)
+        pix.save(str(thumbnail_path))
+    data["pages"] = [
+        {"page_num": i + 1, "text": t, "blocks": b}
+        for i, (t, b) in enumerate(zip(data["pages_text"], data["pages_blocks"]))
+    ]
+    doc.close()
+    return data
+
+extract_pdf_metadata = extract_pdf_from_bytes

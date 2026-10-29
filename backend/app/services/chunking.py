@@ -95,3 +95,11 @@ def chunk_pages(
             })
 
     return chunks
+
+def chunk_document(pages: Any, **kwargs) -> List[Dict[str, Any]]:
+    """Accepts either list of page strings or list of page dicts and returns chunks."""
+    if isinstance(pages, list) and pages and isinstance(pages[0], dict):
+        pages_text = [p.get("text", "") for p in pages]
+    else:
+        pages_text = pages
+    return chunk_pages(pages_text, **kwargs)

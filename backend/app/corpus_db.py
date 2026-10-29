@@ -109,3 +109,60 @@ def search_bm25(query: str, top_k: int = 40, filter_paper_id: Optional[int] = No
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+def insert_corpus_paper(p: Dict[str, Any]):
+    """Insert or update paper metadata into the corpus SQLite DB."""
+    conn = get_corpus_connection()
+    try:
+        with conn:
+            conn.execute("""
+            INSERT OR REPLACE INTO corpus_papers (id, title, authors, abstract, year, file_hash, file_path, page_count, has_text, text_quality, storage_key)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                p["id"],
+                p["title"],
+                p.get("authors"),
+                p.get("abstract"),
+                p.get("year"),
+                p.get("file_hash"),
+                p.get("file_path"),
+                p.get("page_count", 0),
+                p.get("has_text", True),
+                p.get("text_quality", "good"),
+                p.get("storage_key", "")
+            ))
+    finally:
+        conn.close()
+
+def insert_corpus_chunks(chunks: List[Dict[str, Any]]):
+    """Insert chunks into corpus_chunks and update FTS5 virtual table."""
+    conn = get_corpus_connection()
+    try:
+        with conn:
+            for c in chunks:
+                conn.execute("""
+                INSERT OR REPLACE INTO corpus_chunks (id, paper_id, page_start, page_end, section_hint, text, n_tokens, is_reference, faiss_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    c["id"],
+                    c["paper_id"],
+                    c["page_start"],
+                    c["page_end"],
+                    c.get("section_hint"),
+                    c["text"],
+                    c.get("n_tokens", 0),
+                    1 if c.get("is_reference") else 0,
+                    c.get("faiss_id")
+                ))
+
+                conn.execute("""
+                INSERT INTO chunks_fts (chunk_id, paper_id, section_hint, text)
+                VALUES (?, ?, ?, ?)
+                """, (
+                    str(c["id"]),
+                    str(c["paper_id"]),
+                    c.get("section_hint", ""),
+                    c["text"]
+                ))
+    finally:
+        conn.close()

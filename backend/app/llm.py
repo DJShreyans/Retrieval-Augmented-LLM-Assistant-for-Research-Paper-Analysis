@@ -144,3 +144,6 @@ class LLMService:
         raise RuntimeError(f"Failed to generate valid structured response after {retries+1} attempts: {last_err}")
 
 llm_service = LLMService()
+
+def get_llm_client() -> LLMService:
+    return llm_service
