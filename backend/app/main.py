@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend.app.config import settings
-from backend.app.routers import health, auth, search, chat, papers
+from backend.app.routers import health, auth, search, chat, papers, compare
 
 app = FastAPI(
     title="ResearchMate API",
@@ -24,6 +24,7 @@ app.include_router(auth.router)
 app.include_router(search.router)
 app.include_router(chat.router)
 app.include_router(papers.router)
+app.include_router(compare.router)
 
 @app.get("/")
 def root():
