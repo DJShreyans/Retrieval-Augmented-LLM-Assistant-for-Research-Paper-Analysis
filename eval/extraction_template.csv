@@ -1,0 +1,2 @@
+paper_id,method,task,dataset,metric,expected_value,unit,page,quote
+1,"Generative Agents","Agent Simulation","Custom Smallville","Interview Accuracy",85.2,"%",6,"Across evaluations, agents scored 85.2% accuracy."

@@ -1,0 +1,3 @@
+@echo off
+echo Running ResearchMate Ingestion and Indexing Pipeline ...
+python -m backend.scripts.ingest %*

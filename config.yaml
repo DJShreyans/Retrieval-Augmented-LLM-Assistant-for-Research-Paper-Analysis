@@ -1,0 +1,30 @@
+# ==========================================
+# ResearchMate Configuration File
+# ==========================================
+
+chunking:
+  min_tokens: 300
+  max_tokens: 500
+  overlap: 50
+
+retrieval:
+  top_k: 8
+  rerank_top_k: 40
+  rrf_k: 60
+
+embedding:
+  model_name: "BAAI/bge-small-en-v1.5"
+  query_instruction: "Represent this sentence for searching relevant passages: "
+  batch_size: 64
+  normalize: true
+
+reranker:
+  model_name: "BAAI/bge-reranker-v2-m3"
+  fp16: true
+
+hardware:
+  device: "auto" # 'cuda' if torch.cuda.is_available() else 'cpu'
+  max_ingest_workers: 3
+
+clustering:
+  default_clusters: 20
