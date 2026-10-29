@@ -1,7 +1,10 @@
 import csv
 import sys
 from pathlib import Path
-from sqlalchemy.orm import Session
+
+ROOT_DIR_PATH = Path(__file__).resolve().parent.parent.parent
+if str(ROOT_DIR_PATH) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR_PATH))
 
 from backend.app.config import ROOT_DIR
 from backend.app.db import SessionLocal

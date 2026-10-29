@@ -153,6 +153,8 @@ def get_paper_detail(
     paper = db.query(Paper).filter(Paper.id == paper_id).first()
     if not paper:
         raise HTTPException(status_code=404, detail="Paper not found")
+    if paper.visibility == "private" and (not user or user.id != paper.owner_id):
+        raise HTTPException(status_code=403, detail="Access denied to private paper")
 
     tags = (
         db.query(Tag.name)
@@ -183,11 +185,14 @@ def get_paper_detail(
 @router.get("/papers/{paper_id}/pdf")
 def get_paper_pdf(
     paper_id: int,
+    user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db)
 ):
     paper = db.query(Paper).filter(Paper.id == paper_id).first()
     if not paper:
         raise HTTPException(status_code=404, detail="Paper not found")
+    if paper.visibility == "private" and (not user or user.id != paper.owner_id):
+        raise HTTPException(status_code=403, detail="Access denied to private paper")
 
     target_path = ROOT_DIR / paper.storage_key
     if not target_path.exists():
@@ -204,7 +209,17 @@ def get_paper_pdf(
     )
 
 @router.get("/papers/{paper_id}/summary")
-def get_paper_summary_endpoint(paper_id: int, db: Session = Depends(get_db)):
+def get_paper_summary_endpoint(
+    paper_id: int,
+    user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db)
+):
+    paper = db.query(Paper).filter(Paper.id == paper_id).first()
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    if paper.visibility == "private" and (not user or user.id != paper.owner_id):
+        raise HTTPException(status_code=403, detail="Access denied to private paper")
+
     try:
         summary = generate_paper_summary(paper_id, db=db, force_regenerate=False)
         return summary
@@ -212,7 +227,17 @@ def get_paper_summary_endpoint(paper_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail=str(e))
 
 @router.post("/papers/{paper_id}/summary")
-def regenerate_paper_summary_endpoint(paper_id: int, db: Session = Depends(get_db)):
+def regenerate_paper_summary_endpoint(
+    paper_id: int,
+    user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db)
+):
+    paper = db.query(Paper).filter(Paper.id == paper_id).first()
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    if paper.visibility == "private" and (not user or user.id != paper.owner_id):
+        raise HTTPException(status_code=403, detail="Access denied to private paper")
+
     try:
         summary = generate_paper_summary(paper_id, db=db, force_regenerate=True)
         return summary
@@ -220,10 +245,16 @@ def regenerate_paper_summary_endpoint(paper_id: int, db: Session = Depends(get_d
         raise HTTPException(status_code=404, detail=str(e))
 
 @router.get("/papers/{paper_id}/references")
-def get_paper_references_endpoint(paper_id: int, db: Session = Depends(get_db)):
+def get_paper_references_endpoint(
+    paper_id: int,
+    user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db)
+):
     paper = db.query(Paper).filter(Paper.id == paper_id).first()
     if not paper:
         raise HTTPException(status_code=404, detail="Paper not found")
+    if paper.visibility == "private" and (not user or user.id != paper.owner_id):
+        raise HTTPException(status_code=403, detail="Access denied to private paper")
     return extract_paper_references(paper_id, db)
 
 @router.post("/papers/upload")

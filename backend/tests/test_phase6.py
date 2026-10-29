@@ -65,8 +65,17 @@ def test_research_gaps_and_ideas_endpoints():
     assert "expected_metrics" in outline
 
 def test_settings_endpoints():
+    from backend.app.db import SessionLocal
+    from backend.app.models import User
+    from backend.app.security import create_access_token
+    db = SessionLocal()
+    admin = db.query(User).filter(User.role == "admin").first()
+    token = create_access_token({"sub": str(admin.id), "email": admin.email, "role": admin.role}) if admin else ""
+    db.close()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+
     # 1. Get settings
-    res = client.get("/settings")
+    res = client.get("/settings", headers=headers)
     assert res.status_code == 200
     data = res.json()
 
@@ -83,5 +92,5 @@ def test_settings_endpoints():
     assert data["library_stats"]["total_papers"] > 0
 
     # 2. Trigger reindex
-    res_reindex = client.post("/settings/reindex")
+    res_reindex = client.post("/settings/reindex", headers=headers)
     assert res_reindex.status_code == 200

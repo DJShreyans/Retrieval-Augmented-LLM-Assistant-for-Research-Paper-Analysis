@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session
 
 from backend.app.config import settings, yaml_config, ROOT_DIR
 from backend.app.db import get_db
-from backend.app.models import Paper, Chunk
+from backend.app.models import Paper, Chunk, User
+from backend.app.auth import get_current_user
 from backend.app.services.index import get_faiss_index
 
 router = APIRouter(prefix="/settings", tags=["Settings"])
@@ -20,7 +21,10 @@ def mask_key(key: Optional[str]) -> str:
     return f"Configured ({key[:4]}••••{key[-4:]})"
 
 @router.get("")
-def get_system_settings(db: Session = Depends(get_db)):
+def get_system_settings(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     # Memory and hardware
     ram = psutil.virtual_memory()
     total_ram_gb = round(ram.total / (1024**3), 1)
@@ -72,7 +76,10 @@ def get_system_settings(db: Session = Depends(get_db)):
     }
 
 @router.post("/reindex")
-def trigger_reindex():
+def trigger_reindex(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     return {
         "status": "ready",
         "message": "Corpus index is synchronized and up-to-date with SQLite store."
