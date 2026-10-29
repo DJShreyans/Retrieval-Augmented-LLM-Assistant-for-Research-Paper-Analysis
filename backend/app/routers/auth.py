@@ -8,7 +8,7 @@ from backend.app.db import get_db
 from backend.app.models import User, RefreshToken
 from backend.app.config import settings
 from backend.app.security import (
-    hash_password, verify_password, create_access_token, create_refresh_token, decode_token
+    hash_password, verify_password, hash_token, create_access_token, create_refresh_token, decode_token
 )
 from backend.app.auth import get_current_user, verify_google_id_token
 from backend.app.schemas import UserResponse
@@ -74,7 +74,7 @@ def register(req: RegisterRequest, response: Response, db: Session = Depends(get
     # Store refresh token hash
     db.add(RefreshToken(
         user_id=user.id,
-        token_hash=hash_password(refresh_tok),
+        token_hash=hash_token(refresh_tok),
         expires_at=datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
     ))
     db.commit()
@@ -96,7 +96,7 @@ def login(req: LoginRequest, response: Response, db: Session = Depends(get_db)):
 
     db.add(RefreshToken(
         user_id=user.id,
-        token_hash=hash_password(refresh_tok),
+        token_hash=hash_token(refresh_tok),
         expires_at=datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
     ))
     db.commit()
@@ -141,6 +141,13 @@ def google_auth(req: GoogleLoginRequest, response: Response, db: Session = Depen
     access_tok = create_access_token({"sub": str(user.id), "email": user.email, "role": user.role})
     refresh_tok = create_refresh_token({"sub": str(user.id)})
 
+    db.add(RefreshToken(
+        user_id=user.id,
+        token_hash=hash_token(refresh_tok),
+        expires_at=datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    ))
+    db.commit()
+
     set_auth_cookies(response, access_tok, refresh_tok)
     return {
         "access_token": access_tok,
@@ -151,6 +158,49 @@ def google_auth(req: GoogleLoginRequest, response: Response, db: Session = Depen
             "full_name": user.full_name,
             "role": user.role
         }
+    }
+
+@router.post("/refresh")
+def refresh_session(request: Request, response: Response, db: Session = Depends(get_db)):
+    refresh_tok = request.cookies.get("refresh_token")
+    if not refresh_tok:
+        raise HTTPException(status_code=401, detail="Refresh token missing")
+
+    payload = decode_token(refresh_tok)
+    if not payload or payload.get("type") != "refresh":
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+    user_id = payload.get("sub")
+    user = db.query(User).filter(User.id == int(user_id)).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="User not found or disabled")
+
+    # Verify token exists and not expired in DB
+    h = hash_token(refresh_tok)
+    rt_record = db.query(RefreshToken).filter(
+        RefreshToken.user_id == user.id,
+        RefreshToken.token_hash == h,
+        RefreshToken.revoked.is_(False),
+        RefreshToken.expires_at > datetime.utcnow()
+    ).first()
+
+    if not rt_record:
+        raise HTTPException(status_code=401, detail="Session expired or revoked")
+
+    new_access_tok = create_access_token({"sub": str(user.id), "email": user.email, "role": user.role})
+    response.set_cookie(
+        key="access_token",
+        value=new_access_tok,
+        httponly=True,
+        secure=settings.COOKIE_SECURE,
+        samesite="lax",
+        domain=None if settings.COOKIE_DOMAIN == "localhost" else settings.COOKIE_DOMAIN,
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    )
+
+    return {
+        "access_token": new_access_tok,
+        "token_type": "bearer"
     }
 
 @router.get("/me", response_model=UserResponse)
