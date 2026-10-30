@@ -7,12 +7,27 @@ from backend.app.config import settings, ROOT_DIR
 data_dir = ROOT_DIR / "data"
 data_dir.mkdir(parents=True, exist_ok=True)
 
+db_url = settings.DATABASE_URL
+if db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+# Ensure driver compatibility between psycopg v3 and psycopg2
+if db_url.startswith("postgresql://") and "+" not in db_url.split("://")[0]:
+    try:
+        import psycopg
+    except ImportError:
+        try:
+            import psycopg2
+            db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+        except ImportError:
+            pass
+
 connect_args = {}
-if settings.DATABASE_URL.startswith("sqlite"):
+if db_url.startswith("sqlite"):
     connect_args["check_same_thread"] = False
 
 engine = create_engine(
-    settings.DATABASE_URL,
+    db_url,
     connect_args=connect_args,
     echo=False
 )
