@@ -47,5 +47,5 @@ def test_api_health_endpoint():
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "ok"
-    assert data["llm_provider"] == "none"
+    assert data["llm_provider"] in ("none", "gemini", "openai", "mock", "anthropic")
 

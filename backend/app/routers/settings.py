@@ -2,8 +2,10 @@ import os
 import psutil
 import torch
 from typing import Dict, Any, Optional
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
+import requests
 
 from backend.app.config import settings, yaml_config, ROOT_DIR
 from backend.app.db import get_db
@@ -12,6 +14,32 @@ from backend.app.auth import get_current_user
 from backend.app.services.index import get_faiss_index
 
 router = APIRouter(prefix="/settings", tags=["Settings"])
+
+class LLMConfigRequest(BaseModel):
+    provider: str  # 'none' | 'gemini' | 'openai' | 'openai_compatible' | 'anthropic'
+    model: Optional[str] = None
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+
+def update_env_file(key_values: Dict[str, str]):
+    env_path = ROOT_DIR / ".env"
+    if not env_path.exists():
+        return
+    lines = env_path.read_text(encoding="utf-8").splitlines()
+    new_lines = []
+    seen = set()
+    for line in lines:
+        if "=" in line and not line.strip().startswith("#"):
+            k = line.split("=", 1)[0].strip()
+            if k in key_values:
+                new_lines.append(f"{k}={key_values[k]}")
+                seen.add(k)
+                continue
+        new_lines.append(line)
+    for k, v in key_values.items():
+        if k not in seen:
+            new_lines.append(f"{k}={v}")
+    env_path.write_text("\n".join(new_lines), encoding="utf-8")
 
 def mask_key(key: Optional[str]) -> str:
     if not key:
@@ -73,6 +101,83 @@ def get_system_settings(
             "faiss_path": str(settings.FAISS_INDEX_PATH),
             "database_type": db_type
         }
+    }
+
+@router.post("/llm")
+def update_llm_settings(
+    req: LLMConfigRequest,
+    user: User = Depends(get_current_user)
+):
+    provider = req.provider.lower().strip()
+    model = (req.model or "").strip()
+    api_key = (req.api_key or "").strip()
+    base_url = (req.base_url or "").strip()
+
+    if provider not in ("none", "gemini", "openai", "openai_compatible", "anthropic"):
+        raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider}")
+
+    if provider == "none":
+        settings.LLM_PROVIDER = "none"
+        settings.LLM_MODEL = ""
+        settings.LLM_API_KEY = ""
+        update_env_file({"LLM_PROVIDER": "none", "LLM_MODEL": "", "LLM_API_KEY": ""})
+        return {"status": "success", "message": "Switched to free local extractive mode", "provider": "none"}
+
+    # Test the connection before saving
+    if not api_key:
+        raise HTTPException(status_code=400, detail="API key is required to connect an external LLM provider.")
+
+    if provider == "gemini":
+        target_model = model or "gemini-2.5-flash"
+        if "1.5" in target_model:
+            target_model = "gemini-2.5-flash"
+        test_url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={api_key}"
+        test_payload = {"contents": [{"role": "user", "parts": [{"text": "Ping"}]}]}
+        try:
+            res = requests.post(test_url, json=test_payload, timeout=15)
+            if res.status_code == 404 and target_model != "gemini-2.5-flash":
+                target_model = "gemini-2.5-flash"
+                test_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+                res = requests.post(test_url, json=test_payload, timeout=15)
+            res.raise_for_status()
+            model = target_model
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Gemini API connection test failed: {str(e)}")
+
+    elif provider in ("openai", "openai_compatible"):
+        from openai import OpenAI
+        target_model = model or "gpt-4o-mini"
+        client = OpenAI(api_key=api_key, base_url=base_url or None)
+        try:
+            client.chat.completions.create(
+                model=target_model,
+                messages=[{"role": "user", "content": "Ping"}],
+                max_tokens=5
+            )
+            model = target_model
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"OpenAI connection test failed: {str(e)}")
+
+    # Update in-memory settings
+    settings.LLM_PROVIDER = provider
+    settings.LLM_MODEL = model
+    settings.LLM_API_KEY = api_key
+    if base_url:
+        settings.LLM_BASE_URL = base_url
+
+    # Persist in .env
+    update_env_file({
+        "LLM_PROVIDER": provider,
+        "LLM_MODEL": model,
+        "LLM_API_KEY": api_key,
+        "LLM_BASE_URL": base_url or ""
+    })
+
+    return {
+        "status": "success",
+        "message": f"Successfully connected to {provider.upper()} ({model})",
+        "provider": provider,
+        "model": model
     }
 
 @router.post("/reindex")

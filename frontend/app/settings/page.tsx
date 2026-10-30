@@ -53,6 +53,14 @@ export default function SettingsPage() {
   const [reindexing, setReindexing] = useState(false);
   const [reindexMsg, setReindexMsg] = useState<string | null>(null);
 
+  // LLM Config Form State
+  const [provider, setProvider] = useState("gemini");
+  const [model, setModel] = useState("gemini-2.5-flash");
+  const [apiKey, setApiKey] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [savingLLM, setSavingLLM] = useState(false);
+  const [llmMsg, setLlmMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
   useEffect(() => {
     async function loadSettings() {
       try {
@@ -60,6 +68,10 @@ export default function SettingsPage() {
         if (res.ok) {
           const data = await res.json();
           setSettingsData(data);
+          if (data.llm?.provider && data.llm.provider !== "none") {
+            setProvider(data.llm.provider);
+            setModel(data.llm.model || "gemini-2.5-flash");
+          }
         }
       } catch (e) {
         console.error("Failed to load settings", e);
@@ -69,6 +81,38 @@ export default function SettingsPage() {
     }
     loadSettings();
   }, []);
+
+  const handleSaveLLM = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingLLM(true);
+    setLlmMsg(null);
+    try {
+      const res = await fetch("/api/settings/llm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider,
+          model,
+          api_key: apiKey,
+          base_url: baseUrl,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || "Failed to update LLM configuration");
+      }
+      setLlmMsg({ type: "success", text: data.message });
+      setApiKey("");
+      const refreshRes = await fetch("/api/settings");
+      if (refreshRes.ok) {
+        setSettingsData(await refreshRes.json());
+      }
+    } catch (err: any) {
+      setLlmMsg({ type: "error", text: err.message || "Failed to update LLM configuration" });
+    } finally {
+      setSavingLLM(false);
+    }
+  };
 
   const handleReindex = async () => {
     setReindexing(true);
@@ -156,6 +200,124 @@ export default function SettingsPage() {
                 </p>
               </div>
             </div>
+          </div>
+
+          {/* Section 1.5: Connect / Update LLM Provider Form */}
+          <div className="bg-white dark:bg-[#131B2E] p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <Key className="w-4 h-4 text-primary" />
+                <h3 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider font-mono">
+                  Connect or Update LLM Provider
+                </h3>
+              </div>
+              <span className="text-[10px] text-slate-400 font-mono">
+                Changes persist to server .env
+              </span>
+            </div>
+
+            {llmMsg && (
+              <div
+                className={`p-3 rounded-xl border flex items-center gap-2 text-xs font-mono ${
+                  llmMsg.type === "success"
+                    ? "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 text-emerald-700 dark:text-emerald-400"
+                    : "bg-red-50 dark:bg-red-950/40 border-red-200 text-red-700 dark:text-red-400"
+                }`}
+              >
+                {llmMsg.type === "success" ? (
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                )}
+                <span>{llmMsg.text}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveLLM} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1.5 font-mono">
+                    Provider
+                  </label>
+                  <select
+                    value={provider}
+                    onChange={(e) => setProvider(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono focus:ring-2 focus:ring-primary outline-hidden"
+                  >
+                    <option value="gemini">Google Gemini (Recommended)</option>
+                    <option value="openai">OpenAI (GPT-4o / GPT-4o-mini)</option>
+                    <option value="openai_compatible">OpenAI-Compatible (Ollama / Local / Groq)</option>
+                    <option value="anthropic">Anthropic (Claude)</option>
+                    <option value="none">None (Free Local Extractive Mode)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1.5 font-mono">
+                    Model Identifier
+                  </label>
+                  <input
+                    type="text"
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    placeholder={provider === "gemini" ? "gemini-2.5-flash" : "gpt-4o-mini"}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono focus:ring-2 focus:ring-primary outline-hidden"
+                  />
+                </div>
+              </div>
+
+              {provider !== "none" && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1.5 font-mono">
+                      API Secret Key
+                    </label>
+                    <input
+                      type="password"
+                      value={apiKey}
+                      onChange={(e) => setApiKey(e.target.value)}
+                      placeholder="Paste your API key here (tested before saving, never exposed)"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono focus:ring-2 focus:ring-primary outline-hidden"
+                    />
+                  </div>
+
+                  {provider === "openai_compatible" && (
+                    <div>
+                      <label className="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1.5 font-mono">
+                        Base URL
+                      </label>
+                      <input
+                        type="text"
+                        value={baseUrl}
+                        onChange={(e) => setBaseUrl(e.target.value)}
+                        placeholder="e.g. http://localhost:11434/v1"
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono focus:ring-2 focus:ring-primary outline-hidden"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="submit"
+                  disabled={savingLLM}
+                  className="px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-xl font-mono text-xs font-semibold flex items-center gap-2 shadow-xs transition-colors disabled:opacity-50"
+                >
+                  {savingLLM ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Testing & Saving Connection...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Test & Save LLM Configuration</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
 
           {/* Section 2: Embedding & Dense Retrieval */}

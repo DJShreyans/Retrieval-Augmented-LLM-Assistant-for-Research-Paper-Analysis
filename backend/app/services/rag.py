@@ -96,9 +96,20 @@ def generate_rag_stream(
     messages.append({"role": "user", "content": prompt_with_context})
 
     full_answer_parts = []
-    for chunk in llm_service.stream(messages, system=SYSTEM_RAG_PROMPT, user_id=user_id):
-        full_answer_parts.append(chunk)
-        yield f"data: {json.dumps({'token': chunk})}\n\n"
+    try:
+        for chunk in llm_service.stream(messages, system=SYSTEM_RAG_PROMPT, user_id=user_id):
+            full_answer_parts.append(chunk)
+            yield f"data: {json.dumps({'token': chunk})}\n\n"
+    except Exception as e:
+        print(f"[RAG LLM Stream Error] {e}")
+        if not full_answer_parts:
+            intro = "### Top evidence (LLM fallback)\n\n"
+            yield f"data: {json.dumps({'token': intro})}\n\n"
+            full_answer_parts.append(intro)
+            for c in citations:
+                card = f"**[{c['n']}] {c['title']}** (Page {c['page']})\n> \"{c['quote']}\"\n\n"
+                full_answer_parts.append(card)
+                yield f"data: {json.dumps({'token': card})}\n\n"
 
     raw_answer = "".join(full_answer_parts)
     sanitized_answer = sanitize_citations(raw_answer, len(citations))
