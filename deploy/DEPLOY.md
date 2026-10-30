@@ -342,3 +342,44 @@ sudo /opt/researchmate/deploy/restore.sh "$LATEST_BACKUP"
   curl -I https://your-domain.com/api/health
   # HTTP/2 200
   ```
+
+---
+
+## Step 11: GitHub Auto-Deploy Setup (Push-to-Deploy CI/CD)
+
+Whenever you make changes to backend or frontend code and push to GitHub (`git push origin main`), GitHub Actions automatically deploys the updates to your VPS with zero downtime.
+
+### 1. Allow Passwordless Service Restarts on the VPS
+On your VPS, run this single command to allow the `researchmate` user to reload services without being prompted for a sudo password:
+```bash
+echo "researchmate ALL=(ALL) NOPASSWD: /bin/systemctl restart researchmate-backend, /bin/systemctl restart researchmate-frontend, /bin/systemctl reload caddy" | sudo tee /etc/sudoers.d/researchmate
+```
+
+### 2. Configure GitHub Repository Secrets
+1. Go to your GitHub repository:
+   `https://github.com/DJShreyans/Retrieval-Augmented-LLM-Assistant-for-Research-Paper-Analysis/settings/secrets/actions`
+2. Click **New repository secret** and add the following 3 secrets:
+
+| Secret Name | Value | Description |
+|---|---|---|
+| `VPS_HOST` | `<YOUR_VPS_PUBLIC_IP>` | The public IPv4 address or domain of your server |
+| `VPS_USER` | `researchmate` | The username on the VPS |
+| `VPS_SSH_KEY` | `-----BEGIN OPENSSH PRIVATE KEY----- ...` | Your private SSH key (e.g., content of `~/.ssh/id_ed25519` or `~/.ssh/id_rsa`) |
+| `VPS_PORT` | `22` | Optional (defaults to 22) |
+
+### 3. How It Works
+- Whenever you push code:
+  ```bash
+  git add .
+  git commit -m "Update feature X"
+  git push origin main
+  ```
+- GitHub Actions triggers `.github/workflows/deploy.yml`.
+- It executes `deploy/deploy_remote.sh` on the VPS:
+  1. Pulls the new commits (`git pull origin main`).
+  2. Updates Python backend packages if `requirements.txt` changed.
+  3. Runs any new database migrations (`alembic upgrade head`).
+  4. Builds the frontend (`npm run build`).
+  5. Restarts backend and frontend services.
+  6. Runs an automated `/health` verification check.
+- You can watch live deployment progress directly in the **Actions** tab of your GitHub repository!
