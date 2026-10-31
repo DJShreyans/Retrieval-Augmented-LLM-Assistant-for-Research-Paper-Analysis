@@ -65,6 +65,27 @@ def generate_rag_stream(
     )
 
     if not passages:
+        # Direct LLM fallback: answer using Gemini when no indexed passages found
+        if settings.LLM_PROVIDER.lower() != "none":
+            direct_system = """You are ResearchMate AI, an expert academic research assistant.
+Answer the user's research question with a thorough, well-structured academic response.
+Use markdown formatting with headers, bullet points, and bold text for readability.
+Cite general academic knowledge using parenthetical references like (Author et al., Year) where appropriate.
+Provide comprehensive, scholarly answers as if drawing from a broad corpus of research literature."""
+            direct_messages = []
+            if history:
+                direct_messages.extend(history)
+            direct_messages.append({"role": "user", "content": query})
+            full_parts = []
+            try:
+                for chunk in llm_service.stream(direct_messages, system=direct_system, user_id=user_id):
+                    full_parts.append(chunk)
+                    yield f"data: {json.dumps({'token': chunk})}\n\n"
+                full_answer = "".join(full_parts)
+                yield f"data: {json.dumps({'done': True, 'citations': [], 'full_answer': full_answer})}\n\n"
+                return
+            except Exception as e:
+                print(f"[RAG Direct LLM Fallback Error] {e}")
         msg = "Not enough evidence in the indexed papers."
         yield f"data: {json.dumps({'token': msg})}\n\n"
         yield f"data: {json.dumps({'done': True, 'citations': [], 'full_answer': msg})}\n\n"
